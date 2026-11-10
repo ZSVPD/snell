@@ -1,16 +1,16 @@
 #!/bin/bash
-# 此文件由 tools/build.sh 从 src/multi-user.sh 和 src/lib 生成：请修改 src/ 下的文件后重新生成。
+# Этот файл сгенерирован скриптом tools/build.sh из src/multi-user.sh и src/lib: пожалуйста, вносите изменения в файлы внутри src/ и генерируйте заново.
 # =========================================
-# 作者: jinqians
-# 日期: 2025年2月
-# 网站：jinqians.com
-# 描述: 这个脚本用于管理 Snell 代理的多用户配置
+# Автор: jinqians
+# Дата: Февраль 2025 г.
+# Сайт: jinqians.com
+# Описание: Этот скрипт предназначен для управления многопользовательской конфигурацией прокси Snell
 # =========================================
 
-# 共用部分（src/lib，发布时由 tools/build.sh 合进来）
+# Общая часть (src/lib, объединяется через tools/build.sh при сборке релиза)
 # ── lib/common.sh ─────────────────────────────────────────────────────────────
-# 所有脚本共用：颜色、root 检查、系统与包管理器、脚本的发布地址。
-# 只用 POSIX sh 的写法：Alpine / Docker 版脚本在 ash、dash 下也要能用。
+# Общее для всех скриптов: цвета, проверка root, определение ОС и пакетного менеджера, адреса публикации скриптов.
+# Используется только синтаксис POSIX sh: версии скриптов для Alpine / Docker должны работать в ash и dash.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -18,33 +18,33 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# 脚本的发布地址。短域名（*.jinqians.com）由 Cloudflare 重定向到仓库里的文件：
-# snell / snell-centos / snell-alpine → 根目录，menu / snell-docker / install → scripts/。
-# 菜单里调用的子脚本从 SNELL_RAW_BASE 下的 scripts/、docker/ 取。
-# 脚本自身的更新与管理命令走短域名，运行才会被统计到。
-# 可以用同名环境变量换成镜像地址（测试时指向本地的文件）。
+# Адреса публикации скриптов. Короткие домены (*.jinqians.com) перенаправляются через Cloudflare на файлы в репозитории:
+# snell / snell-centos / snell-alpine → корневая директория, menu / snell-docker / install → scripts/.
+# Подскрипты, вызываемые из меню, берутся из папок scripts/ и docker/ внутри SNELL_RAW_BASE.
+# Обновление самого скрипта и команды управления идут через короткие домены для учета статистики запусков.
+# Можно заменить на зеркало с помощью одноименных переменных окружения (при тестировании можно указать локальные файлы).
 SNELL_RAW_BASE="${SNELL_RAW_BASE:-https://raw.githubusercontent.com/jinqians/snell/main}"
-SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh（Debian / Ubuntu / CentOS / RHEL）
+SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh (Debian / Ubuntu / CentOS / RHEL)
 SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://snell-alpine.jinqians.com}" # snell-alpine.sh
 SNELL_DOCKER_SCRIPT_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}" # snell-docker.sh
 SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://menu.jinqians.com}"             # menu.sh
 
-# 检查是否以 root 权限运行
+# Проверка запуска с правами root
 check_root() {
     if [ "$(id -u)" != "0" ]; then
-        printf '%b\n' "${RED}请以 root 权限运行此脚本${RESET}"
+        printf '%b\n' "${RED}Пожалуйста, запустите этот скрипт с правами root${RESET}"
         exit 1
     fi
 }
 
-# 识别系统：OS_FAMILY = debian | rhel | alpine | unknown，PKG = apt | dnf | yum | apk
+# Определение ОС: OS_FAMILY = debian | rhel | alpine | unknown, PKG = apt | dnf | yum | apk
 OS_FAMILY=""
 PKG=""
 detect_os() {
     [ -n "$OS_FAMILY" ] && return 0
     OS_FAMILY="unknown"
     if [ -f /etc/os-release ]; then
-        # 在子 shell 里读，os-release 的 NAME / VERSION 等变量不会覆盖脚本自己的
+        # Чтение в подоболочке (subshell), чтобы переменные NAME / VERSION из os-release не перезаписали переменные скрипта
         case " $(. /etc/os-release; echo "$ID $ID_LIKE" | tr '[:upper:]' '[:lower:]') " in
             *" debian "*|*" ubuntu "*) OS_FAMILY="debian" ;;
             *" rhel "*|*" centos "*|*" fedora "*|*" rocky "*|*" almalinux "*) OS_FAMILY="rhel" ;;
@@ -60,16 +60,16 @@ detect_os() {
     fi
 }
 
-# 等待其他 apt 进程完成
+# Ожидание завершения других процессов apt
 wait_for_apt() {
     command -v fuser >/dev/null 2>&1 || return 0
     while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
-        printf '%b\n' "${YELLOW}等待其他 apt 进程完成...${RESET}"
+        printf '%b\n' "${YELLOW}Ожидание завершения других процессов apt...${RESET}"
         sleep 2
     done
 }
 
-# 用系统的包管理器安装软件包
+# Установка пакетов с помощью системного пакетного менеджера
 pkg_install() {
     detect_os
     case "$PKG" in
@@ -82,13 +82,13 @@ pkg_install() {
         yum) yum install -y "$@" ;;
         apk) apk add --no-cache "$@" ;;
         *)
-            printf '%b\n' "${RED}未识别的包管理器，请手动安装：$*${RESET}"
+            printf '%b\n' "${RED}Неизвестный пакетный менеджер, пожалуйста, установите вручную: $*${RESET}"
             return 1
             ;;
     esac
 }
 
-# 提供某个命令的软件包名（各发行版不同的在这里对上）
+# Определение имени пакета для конкретной команды (здесь сопоставляются различия между дистрибутивами)
 pkg_for_cmd() {
     detect_os
     case "$1" in
@@ -102,45 +102,45 @@ pkg_for_cmd() {
     esac
 }
 
-# 缺哪个命令就装哪个包；装不上返回非 0，由调用方决定是否退出
+# Установка пакетов для отсутствующих команд; если установить не удалось — возврат ненулевого кода (вызывающая сторона решает, выходить ли)
 ensure_cmds() {
     _ec_missing=""
     for _ec_cmd in "$@"; do
         command -v "$_ec_cmd" >/dev/null 2>&1 || _ec_missing="${_ec_missing} $(pkg_for_cmd "$_ec_cmd")"
     done
     [ -z "$_ec_missing" ] && return 0
-    printf '%b\n' "${YELLOW}正在安装依赖：${_ec_missing# }${RESET}"
-    # shellcheck disable=SC2086 # 包名按空格分开传
+    printf '%b\n' "${YELLOW}Установка зависимостей: ${_ec_missing# }${RESET}"
+    # shellcheck disable=SC2086 # Имена пакетов передаются через пробел
     pkg_install $_ec_missing || return 1
     for _ec_cmd in "$@"; do
         if ! command -v "$_ec_cmd" >/dev/null 2>&1; then
-            printf '%b\n' "${RED}安装后仍找不到 ${_ec_cmd}，请手动安装 $(pkg_for_cmd "$_ec_cmd")${RESET}"
+            printf '%b\n' "${RED}После установки команда ${_ec_cmd} по-прежнему не найдена, установите вручную: $(pkg_for_cmd "$_ec_cmd")${RESET}"
             return 1
         fi
     done
 }
 
-# 下载远程脚本并做完整性校验：传输失败即停、非空、语法检查。
-# 只能保证传输完整；仓库本身被篡改要靠发布签名来防。
+# Скачивание удаленного скрипта и проверка целостности: остановка при ошибке передачи, проверка на пустоту и проверка синтаксиса.
+# Гарантирует только целостность передачи; от компрометации самого репозитория должна защищать подпись релиза.
 fetch_verified_script() {   # <url> <dest>
     if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 "$1" -o "$2"; then
-        printf '%b\n' "${RED}下载失败: $1${RESET}" >&2
+        printf '%b\n' "${RED}Ошибка скачивания: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
     if [ ! -s "$2" ]; then
-        printf '%b\n' "${RED}下载的文件为空，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный файл пуст и был удален: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
-    # bash 能解析 sh 写法；没有 bash 的系统（Alpine）用 sh 检查
+    # bash может парсить синтаксис sh; на системах без bash (например, Alpine) для проверки используется sh
     if command -v bash >/dev/null 2>&1; then
         _fv_shell=bash
     else
         _fv_shell=sh
     fi
     if ! "$_fv_shell" -n "$2" 2>/dev/null; then
-        printf '%b\n' "${RED}下载的脚本未通过语法检查，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный скрипт не прошел проверку синтаксиса и был удален: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
@@ -148,19 +148,19 @@ fetch_verified_script() {   # <url> <dest>
 }
 
 # ── lib/release.sh ────────────────────────────────────────────────────────────
-# Snell 官方版本：从发布页取各大版本的最新版本号，生成下载地址。POSIX sh。
+# Официальные версии Snell: получение последних номеров версий для каждой мажорной ветки со страницы релизов и генерация ссылок на скачивание. POSIX sh.
 
-# 抓取失败、或发布页上没有这个大版本的下载地址时的兜底版本号。
-# v6.0.0 正式版发布后，发布页去掉了 v5 的下载地址（只留更新说明），v5 从此只能靠这里的 v5.0.1
+# Резервные номера версий на случай ошибки загрузки страницы или отсутствия ссылок для данной мажорной ветки на странице релизов.
+# После выхода стабильной версии v6.0.0 со страницы релизов убрали ссылки на v5 (оставив только список изменений), поэтому v5 теперь опирается на указанную здесь v5.0.1
 SNELL_V4_FALLBACK="v4.1.1"
 SNELL_V5_FALLBACK="v5.0.1"
 SNELL_V6_FALLBACK="v6.0.0"
 
-# Snell 官方发布页（旧的 manual.nssurge.com/others/snell.html 已下线）
+# Официальная страница релизов Snell (старый адрес manual.nssurge.com/others/snell.html больше не работает)
 SNELL_RELEASE_NOTES_URL="https://kb.nssurge.com/surge-knowledge-base/release-notes/snell"
 SNELL_RELEASE_NOTES_URL_ZH="https://kb.nssurge.com/surge-knowledge-base/zh/release-notes/snell"
 
-# 抓取官方发布页内容
+# Получение содержимого официальной страницы релизов
 fetch_snell_release_notes() {
     local notes
     notes=$(curl -sL --max-time 15 "$SNELL_RELEASE_NOTES_URL")
@@ -170,8 +170,8 @@ fetch_snell_release_notes() {
     echo "$notes"
 }
 
-# 把版本号转成定长可排序键，排序优先级：beta < rc < 正式版
-# 6.0.0b4 -> 006.000.000.1.0004；6.0.0rc -> 006.000.000.2.0000；6.0.0rc2 -> 006.000.000.2.0002；6.0.0 -> 006.000.000.3.0000
+# Преобразование номера версии в ключ фиксированной длины для сортировки (приоритет: beta < rc < стабильный релиз)
+# 6.0.0b4 -> 006.000.000.1.0004; 6.0.0rc -> 006.000.000.2.0000; 6.0.0rc2 -> 006.000.000.2.0002; 6.0.0 -> 006.000.000.3.0000
 snell_version_sort_key() {
     echo "${1#[vV]}" | awk '{
         ver = $0
@@ -193,7 +193,7 @@ snell_version_sort_key() {
     }'
 }
 
-# 从发布页中挑出指定大版本的最新版本（页面上的先后顺序不代表新旧，必须排序）
+# Выбор самой свежей версии указанной мажорной ветки со страницы релизов (порядок на странице не гарантирует хронологию, необходима сортировка)
 pick_latest_snell_version() {
     local major="$1"
     local notes="$2"
@@ -210,7 +210,7 @@ pick_latest_snell_version() {
         | awk '{print $2}'
 }
 
-# 获取 Snell v4 最新版本
+# Получение последней версии Snell v4
 get_latest_snell_v4_version() {
     local ver
     ver=$(pick_latest_snell_version 4 "$(fetch_snell_release_notes)")
@@ -221,7 +221,7 @@ get_latest_snell_v4_version() {
     fi
 }
 
-# 获取 Snell v5 最新版本
+# Получение последней версии Snell v5
 get_latest_snell_v5_version() {
     local ver
     ver=$(pick_latest_snell_version 5 "$(fetch_snell_release_notes)")
@@ -232,7 +232,7 @@ get_latest_snell_v5_version() {
     fi
 }
 
-# 获取 Snell v6 最新版本
+# Получение последней версии Snell v6
 get_latest_snell_v6_version() {
     local ver
     ver=$(pick_latest_snell_version 6 "$(fetch_snell_release_notes)")
@@ -243,7 +243,7 @@ get_latest_snell_v6_version() {
     fi
 }
 
-# 解析指定通道的最新版本号（失败时回落到内置常量）
+# Определение последнего номера версии для указанного канала (при ошибке возвращает встроенную константу)
 resolve_latest_version_for_channel() {
     case "$1" in
         v6) get_latest_snell_v6_version ;;
@@ -253,7 +253,7 @@ resolve_latest_version_for_channel() {
     esac
 }
 
-# 生成指定通道 + 版本号的下载地址；不支持的架构返回非 0（不 exit，调用方可继续）
+# Генерация URL скачивания для указанного канала и номера версии; при неподдерживаемой архитектуре возвращает ненулевой код (без exit, чтобы вызывающий код мог продолжить работу)
 snell_download_url_for() {
     local version_choice="$1"
     local resolved_version="$2"
@@ -263,13 +263,13 @@ snell_download_url_for() {
     case "$version_choice" in
         v4|v5|v6) ;;
         *)
-            printf '%b\n' "${RED}不支持的 Snell 通道: ${version_choice}${RESET}" >&2
+            printf '%b\n' "${RED}Неподдерживаемый канал Snell: ${version_choice}${RESET}" >&2
             return 1
             ;;
     esac
 
     if [ "$version_choice" = "v6" ] && { [ "$arch" = "armv7l" ] || [ "$arch" = "armv7" ]; }; then
-        printf '%b\n' "${RED}Snell v6 暂不提供 armv7l 构建${RESET}" >&2
+        printf '%b\n' "${RED}Для Snell v6 пока нет сборок под архитектуру armv7l${RESET}" >&2
         return 1
     fi
 
@@ -279,20 +279,20 @@ snell_download_url_for() {
         "aarch64"|"arm64") echo "https://dl.nssurge.com/snell/snell-server-${resolved_version}-linux-aarch64.zip" ;;
         "armv7l"|"armv7")  echo "https://dl.nssurge.com/snell/snell-server-${resolved_version}-linux-armv7l.zip" ;;
         *)
-            printf '%b\n' "${RED}不支持的架构: ${arch}${RESET}" >&2
+            printf '%b\n' "${RED}Неподдерживаемая архитектура: ${arch}${RESET}" >&2
             return 1
             ;;
     esac
 }
 
 # ── lib/netinfo.sh ────────────────────────────────────────────────────────────
-# 本机公网地址与所在国家（生成客户端配置时用）。POSIX sh。
+# Внешний IP-адрес сервера и страна его расположения (используется при генерации клиентских конфигураций). POSIX sh.
 
-# 本机公网 IPv4 / IPv6（取不到时为空）
+# Внешний IPv4 / IPv6 адрес сервера (пустая строка при неудаче)
 get_public_ipv4() { curl -s4 --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null; }
 get_public_ipv6() { curl -s6 --connect-timeout 5 --max-time 10 https://api64.ipify.org 2>/dev/null; }
 
-# 查询 IP 所属国家代码（多接口回退，避免单一接口限流返回错误信息）
+# Определение двухбуквенного кода страны по IP (несколько API с резервным переключением во избежание ошибок при лимитах запросов)
 get_ip_country() {
     local target="$1"
     local api=""
@@ -327,21 +327,21 @@ get_ip_country() {
 }
 
 # ── lib/firewall.sh ───────────────────────────────────────────────────────────
-# 开放 / 关闭端口：firewalld、ufw、iptables + ip6tables、nftables，系统在用哪个就配哪个，
-# 并持久化。所有脚本共用这一份（以前各脚本各有一份，CentOS 版才认 firewalld、
-# Docker 版只开 TCP、重复安装会叠加重复规则）。POSIX sh。
+# Открытие / закрытие портов: firewalld, ufw, iptables + ip6tables, nftables — настраивается то, что используется в системе,
+# с сохранением правил после перезагрузки. Общий модуль для всех скриптов (ранее в каждом скрипте была своя копия:
+# только версия для CentOS знала про firewalld, Docker-версия открывала только TCP, а повторная установка дублировала правила). POSIX sh.
 
-# firewalld 正在运行
+# Проверка активности firewalld
 _fw_firewalld_active() {
     command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1
 }
 
-# ufw 已启用（-w：不把 inactive 当成 active）
+# Проверка активности ufw (-w: чтобы не принять inactive за active)
 _fw_ufw_active() {
     command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"
 }
 
-# both | tcp | udp → 协议列表
+# both | tcp | udp → список протоколов
 _fw_protos() {
     case "$1" in
         tcp) echo "tcp" ;;
@@ -350,7 +350,7 @@ _fw_protos() {
     esac
 }
 
-# iptables 规则持久化：Debian 的 /etc/iptables、RHEL 的 iptables-services、Alpine 的 init 脚本
+# Сохранение правил iptables: /etc/iptables в Debian, iptables-services в RHEL, init-скрипт в Alpine
 _fw_iptables_save() {
     if [ -x /etc/init.d/iptables ] && command -v rc-update >/dev/null 2>&1; then
         /etc/init.d/iptables save >/dev/null 2>&1 || true
@@ -369,12 +369,12 @@ _fw_iptables_save() {
     fi
 }
 
-# iptables / ip6tables：没有同样的规则才插入
+# iptables / ip6tables: добавляем правило только если такого еще нет
 _fw_iptables_open() {   # <port> <protos>
     _fio_changed=false
     for _fio_t in iptables ip6tables; do
         command -v "$_fio_t" >/dev/null 2>&1 || continue
-        "$_fio_t" -L INPUT -n >/dev/null 2>&1 || continue   # 内核或容器里不可用
+        "$_fio_t" -L INPUT -n >/dev/null 2>&1 || continue   # Недоступно в ядре или контейнере
         for _fio_p in $2; do
             if ! "$_fio_t" -C INPUT -p "$_fio_p" --dport "$1" -j ACCEPT 2>/dev/null; then
                 "$_fio_t" -I INPUT -p "$_fio_p" --dport "$1" -j ACCEPT 2>/dev/null && _fio_changed=true
@@ -382,7 +382,7 @@ _fw_iptables_open() {   # <port> <protos>
         done
     done
     if [ "$_fio_changed" = true ]; then
-        printf '%b\n' "${CYAN}在 iptables 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в iptables${RESET}"
         _fw_iptables_save
     fi
 }
@@ -402,7 +402,7 @@ _fw_iptables_close() {   # <port>
     return 0
 }
 
-# 保存 nftables 规则（有持久化配置文件时）
+# Сохранение правил nftables (при наличии конфигурационного файла постоянного хранения)
 save_nftables_rules() {
     command -v nft >/dev/null 2>&1 || return 0
     for _snr_f in /etc/nftables.conf /etc/sysconfig/nftables.conf /etc/nftables.nft; do
@@ -413,14 +413,14 @@ save_nftables_rules() {
         elif command -v rc-update >/dev/null 2>&1; then
             rc-update add nftables boot >/dev/null 2>&1 || true
         fi
-        printf '%b\n' "${GREEN}nftables 规则已保存${RESET}"
+        printf '%b\n' "${GREEN}Правила nftables сохранены${RESET}"
         return 0
     done
     return 0
 }
 
-# nftables 里 hook 在 input 上的 filter 链（"族 表 链" 每行一条）。
-# iptables-nft 自己的 ip/ip6 filter 表已由 iptables 处理，跳过，免得规则重复。
+# Цепочки фильтрации в nftables с хуком на input (по одной записи «семейство таблица цепочка» на строку).
+# Собственные таблицы filter (ip/ip6) от iptables-nft уже обработаны через iptables, пропускаем их во избежание дублирования.
 _fw_nft_input_chains() {
     nft -a list ruleset 2>/dev/null | awk -v skip_ipt="$1" '
         $1 == "table" { family = $2; table = $3; gsub(/[{}]/, "", table) }
@@ -432,7 +432,7 @@ _fw_nft_input_chains() {
     '
 }
 
-# 在 nftables 现有的 input 链里放行端口（没有 nftables 防火墙时什么都不做）
+# Разрешение порта в существующих цепочках input в nftables (если файрвола nftables нет — ничего не делает)
 open_nftables_port() {   # <port> [both|tcp|udp]
     command -v nft >/dev/null 2>&1 || return 0
     _onp_skip=0
@@ -452,12 +452,12 @@ open_nftables_port() {   # <port> [both|tcp|udp]
 $_onp_chains
 EOF
     if [ "$_onp_changed" = true ]; then
-        printf '%b\n' "${CYAN}在 nftables 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в nftables${RESET}"
         save_nftables_rules
     fi
 }
 
-# 删掉 nftables 里放行该端口的规则
+# Удаление правил разрешения для указанного порта из nftables
 close_nftables_port() {   # <port>
     command -v nft >/dev/null 2>&1 || return 0
     _cnp_rules=$(nft -a list ruleset 2>/dev/null | awk -v port="$1" '
@@ -475,20 +475,20 @@ EOF
     save_nftables_rules
 }
 
-# 开放端口：firewalld 在运行就只交给它；ufw 已启用就只交给它；否则配 iptables 与 nftables
+# Открытие порта: если запущен firewalld — используем только его; если активен ufw — только его; иначе настраиваем iptables и nftables
 open_port() {   # <port> [both|tcp|udp]
     _op_protos=$(_fw_protos "${2:-both}")
     if _fw_firewalld_active; then
-        printf '%b\n' "${CYAN}在 firewalld 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в firewalld${RESET}"
         for _op_p in $_op_protos; do
             firewall-cmd --permanent --add-port="$1/${_op_p}" >/dev/null 2>&1 || true
             firewall-cmd --add-port="$1/${_op_p}" >/dev/null 2>&1 || true
         done
         return 0
     fi
-    # ufw 装了但没启用时也写进去：以后启用 ufw 时端口仍是开的
+    # Если ufw установлен, но не включен — все равно добавляем правило, чтобы при будущем включении ufw порт остался открытым
     if command -v ufw >/dev/null 2>&1; then
-        printf '%b\n' "${CYAN}在 UFW 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в UFW${RESET}"
         for _op_p in $_op_protos; do
             ufw allow "$1/${_op_p}" >/dev/null 2>&1 || true
         done
@@ -499,7 +499,7 @@ open_port() {   # <port> [both|tcp|udp]
     return 0
 }
 
-# 关闭端口：各个防火墙里放行它的规则都删掉
+# Закрытие порта: удаляем разрешающие правила из всех файрволов
 close_port() {   # <port>
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         for _cp_p in tcp udp; do
@@ -517,7 +517,7 @@ close_port() {   # <port>
     return 0
 }
 
-# 端口在当前防火墙里是否放行（测试与状态显示用）：firewalld / ufw / iptables / nftables 任一处放行即算
+# Проверка, разрешен ли порт в текущем файрволе (для тестов и отображения статуса): достаточно разрешения в любом из firewalld / ufw / iptables / nftables
 port_allowed() {   # <port> <tcp|udp>
     if _fw_firewalld_active; then
         firewall-cmd --query-port="$1/$2" >/dev/null 2>&1
@@ -533,7 +533,7 @@ port_allowed() {   # <port> <tcp|udp>
     command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q "$2 dport $1 .*accept"
 }
 
-# 端口是否有进程在监听（TCP 或 UDP）
+# Проверка, прослушивается ли порт каким-либо процессом (TCP или UDP)
 is_port_in_use() {   # <port>
     if command -v ss >/dev/null 2>&1; then
         ss -H -ltn "( sport = :$1 )" 2>/dev/null | grep -q . && return 0
@@ -548,7 +548,7 @@ is_port_in_use() {   # <port>
     return 1
 }
 
-# 显示占用指定端口的进程
+# Отображение процесса, занимающего указанный порт
 show_port_occupier() {   # <port>
     if command -v ss >/dev/null 2>&1; then
         ss -ltnp "( sport = :$1 )" 2>/dev/null | sed 's/^/  /'
@@ -562,18 +562,18 @@ show_port_occupier() {   # <port>
 }
 
 # ── lib/channels.sh ───────────────────────────────────────────────────────────
-# systemd 安装的布局与多版本共存（v4 / v5 / v6）。snell.sh、multi-user.sh、
-# shadowtls.sh 共用（bash）。
+# Структура установки systemd и сосуществование нескольких версий (v4 / v5 / v6).
+# Используется совместно в snell.sh, multi-user.sh, shadowtls.sh (bash).
 #
-# 二进制布局：
-#   ${INSTALL_DIR}/snell-server-v4|v5|v6   各通道的实体文件，systemd unit 直接指向它
-#   ${INSTALL_DIR}/snell-server            软链，指向主用户所用通道（保留给旧的探测逻辑）
+# Расположение бинарных файлов:
+#   ${INSTALL_DIR}/snell-server-v4|v5|v6   реальные файлы для каждого канала, юниты systemd указывают напрямую на них
+#   ${INSTALL_DIR}/snell-server            символьная ссылка, указывающая на канал основного пользователя (сохранена для старой логики определения)
 #
-# 版本标记：
-#   每个用户配置首行写 "#version-choice = vX"。注释形式，snell-server 不会解析到，
-#   且随 .conf 一起被备份/还原，不需要额外的伴生文件。PSM 写的配置也带这个标记。
+# Метка версии:
+#   В первой строке конфигурации каждого пользователя пишется "#version-choice = vX". Поскольку это комментарий,
+#   snell-server его игнорирует, и метка сохраняется при резервном копировании/восстановлении вместе с .conf без дополнительных файлов. Конфигурации от PSM также содержат эту метку.
 
-# 系统路径
+# Системные пути
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 SNELL_CONF_DIR="/etc/snell"
@@ -584,7 +584,7 @@ SYSTEMD_SOCKET_FILE="${SYSTEMD_DIR}/snell.socket"
 SYSTEMD_NETNS_FILE="${SYSTEMD_DIR}/snell-netns.service"
 NETNS_SETUP_SCRIPT="${INSTALL_DIR}/snell-netns-setup.sh"
 
-# 旧的配置文件路径（用于兼容性检查）
+# Старые пути к файлам конфигурации (для проверки обратной совместимости)
 OLD_SNELL_CONF_FILE="${SNELL_CONF_DIR}/snell-server.conf"
 OLD_SYSTEMD_SERVICE_FILE="/lib/systemd/system/snell.service"
 SNELL_SERVICE_USER="snell"
@@ -593,7 +593,7 @@ SNELL_SERVICE_GROUP="snell"
 SNELL_VERSION_MARKER_KEY="version-choice"
 SNELL_ALL_VERSIONS="v4 v5 v6"
 
-# 检测当前安装的 Snell 版本
+# Определение текущей установленной версии Snell
 detect_installed_snell_version() {
     if command -v snell-server &> /dev/null; then
         local version_output=$(snell-server --v 2>&1)
@@ -609,7 +609,7 @@ detect_installed_snell_version() {
     fi
 }
 
-# 版本号 -> 二进制路径
+# Номер версии -> путь к бинарному файлу
 snell_binary_for_version() {
     case "$1" in
         v4|v5|v6) echo "${INSTALL_DIR}/snell-server-$1" ;;
@@ -617,7 +617,7 @@ snell_binary_for_version() {
     esac
 }
 
-# 探测指定二进制自身的版本；不可执行时返回 unknown
+# Определение собственной версии указанного бинарного файла; если файл не исполняемый — возвращает unknown
 probe_snell_binary_version() {
     local binary="$1"
     if [ ! -x "$binary" ]; then
@@ -632,12 +632,12 @@ probe_snell_binary_version() {
     elif echo "$version_output" | grep -q "v5"; then
         echo "v5"
     else
-        # 早期 v4 的 --v 输出不带大版本号，与历史行为保持一致按 v4 处理
+        # Вывод --v в ранних сборках v4 не содержал мажорного номера версии; для совместимости считаем его v4
         echo "v4"
     fi
 }
 
-# 列出已落盘的通道（空格分隔，可能为空）
+# Список установленных на диске каналов версий (через пробел, может быть пустым)
 list_installed_snell_versions() {
     local version installed=""
     for version in $SNELL_ALL_VERSIONS; do
@@ -648,7 +648,7 @@ list_installed_snell_versions() {
     echo "${installed% }"
 }
 
-# 读取配置里的版本标记；没有标记时返回非 0
+# Чтение метки версии из файла конфигурации; при отсутствии метки возвращает ненулевой код
 read_conf_snell_version() {
     local conf_file="$1"
     [ -f "$conf_file" ] || return 1
@@ -662,7 +662,7 @@ read_conf_snell_version() {
     esac
 }
 
-# 配置对应的通道：优先读标记，读不到回落到软链的实际版本（兼容尚未迁移的老安装）
+# Получение канала версии для конфигурации: сначала читаем метку, при неудаче берем версию по символьной ссылке (совместимость со старыми установками до миграции)
 get_conf_snell_version() {
     local conf_file="$1"
     local marked
@@ -673,8 +673,8 @@ get_conf_snell_version() {
     detect_installed_snell_version
 }
 
-# 幂等写入版本标记：相同则跳过，不同则替换，缺失则插到首行。
-# 用 cat 回写而不是 mv，保留原文件的属主与权限（服务以 snell 用户身份读取）
+# Идемпотентная запись метки версии: если совпадает — пропускаем, если отличается — заменяем, если отсутствует — вставляем в первую строку.
+# Используем перезапись через cat вместо mv, чтобы сохранить владельца и права доступа исходного файла (служба читает его от имени пользователя snell)
 set_conf_snell_version() {
     local conf_file="$1"
     local version="$2"
@@ -697,27 +697,27 @@ set_conf_snell_version() {
         grep -Ev "^[[:space:]]*#[[:space:]]*${SNELL_VERSION_MARKER_KEY}[[:space:]]*=" "$conf_file"
     } > "$tmp_conf"; then
         rm -f "$tmp_conf"
-        echo -e "${RED}生成版本标记失败: ${conf_file}${RESET}" >&2
+        echo -e "${RED}Не удалось сформировать метку версии: ${conf_file}${RESET}" >&2
         return 1
     fi
 
     if ! cat "$tmp_conf" > "$conf_file"; then
         rm -f "$tmp_conf"
-        echo -e "${RED}回写版本标记失败: ${conf_file}${RESET}" >&2
+        echo -e "${RED}Не удалось записать метку версии: ${conf_file}${RESET}" >&2
         return 1
     fi
     rm -f "$tmp_conf"
     return 0
 }
 
-# 获取 Snell 端口
+# Получение основного порта Snell
 get_snell_port() {
     if [ -f "${SNELL_CONF_DIR}/users/snell-main.conf" ]; then
         grep -E '^listen' "${SNELL_CONF_DIR}/users/snell-main.conf" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p'
     fi
 }
 
-# 端口 -> 配置文件路径（主端口走主配置）
+# Порт -> путь к файлу конфигурации (основной порт использует основную конфигурацию)
 snell_conf_for_port() {
     local port="$1"
     local main_port
@@ -729,12 +729,12 @@ snell_conf_for_port() {
     fi
 }
 
-# 端口 -> 通道
+# Порт -> канал версии
 get_port_snell_version() {
     get_conf_snell_version "$(snell_conf_for_port "$1")"
 }
 
-# 端口 -> systemd 服务名
+# Порт -> имя службы systemd
 snell_service_for_port() {
     local port="$1"
     local main_port
@@ -746,7 +746,7 @@ snell_service_for_port() {
     fi
 }
 
-# 指定通道当前被哪些服务使用（每行一个 systemd 服务名）
+# Список служб, использующих указанный канал версии (по одному имени службы systemd на строку)
 list_services_using_version() {
     local version="$1"
     local conf_file port
@@ -769,13 +769,13 @@ list_services_using_version() {
     done
 }
 
-# 让 snell-server 软链指向指定通道（旧探测逻辑与 ShadowTLS 仍依赖这个名字）
+# Переключение символьной ссылки snell-server на указанный канал (старая логика определения и ShadowTLS все еще полагаются на это имя)
 update_snell_symlink() {
     local version="$1"
     local target
     target=$(snell_binary_for_version "$version")
 
-    # 目标不存在时不动现场，避免把可用的旧二进制删成断链
+    # Если целевой файл не существует — ничего не трогаем, чтобы не превратить рабочий старый бинарник в битую ссылку
     if [ ! -x "$target" ]; then
         return 1
     fi
@@ -786,45 +786,45 @@ update_snell_symlink() {
     ln -sfn "$target" "${INSTALL_DIR}/snell-server"
 }
 
-# 下载官方的压缩包并解压出 <目录>/snell-server。只往 stderr 打印进度
-fetch_snell_release_binary() {   # <通道> <版本号> <目录>
+# Скачивание официального архива и распаковка <директория>/snell-server. Прогресс выводится только в stderr
+fetch_snell_release_binary() {   # <канал> <версия> <директория>
     local version="$1" resolved="$2" dir="$3" url
     if ! url=$(snell_download_url_for "$version" "$resolved"); then
         return 1
     fi
 
-    echo -e "${CYAN}正在下载 Snell ${version} (${resolved})...${RESET}" >&2
+    echo -e "${CYAN}Скачивание Snell ${version} (${resolved})...${RESET}" >&2
     echo -e "${YELLOW}${url}${RESET}" >&2
 
-    # 下载与解压要用的命令，缺了先装（任何发行版）
+    # Проверка наличия команд для скачивания и распаковки, установка при отсутствии (для любого дистрибутива)
     ensure_cmds curl unzip >&2 || return 1
 
     if ! curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "${dir}/snell-server.zip" "$url"; then
-        echo -e "${RED}下载 Snell ${version} 失败: ${url}${RESET}" >&2
+        echo -e "${RED}Ошибка скачивания Snell ${version}: ${url}${RESET}" >&2
         return 1
     fi
 
-    # 校验压缩包完整性（官方未发布 hash，只能做传输完整性检查）
+    # Проверка целостности архива (официальные хеш-суммы не публикуются, возможна только проверка целостности передачи)
     if ! unzip -t -q "${dir}/snell-server.zip" >/dev/null 2>&1; then
-        echo -e "${RED}下载的压缩包已损坏，已丢弃: ${url}${RESET}" >&2
+        echo -e "${RED}Скачанный архив поврежден и был удален: ${url}${RESET}" >&2
         return 1
     fi
 
     if ! unzip -o -q "${dir}/snell-server.zip" -d "$dir"; then
-        echo -e "${RED}解压 Snell ${version} 失败${RESET}" >&2
+        echo -e "${RED}Ошибка распаковки Snell ${version}${RESET}" >&2
         return 1
     fi
 
     if [ ! -f "${dir}/snell-server" ]; then
-        echo -e "${RED}压缩包中未找到 snell-server 可执行文件${RESET}" >&2
+        echo -e "${RED}Исполняемый файл snell-server не найден в архиве${RESET}" >&2
         return 1
     fi
 }
 
-# 本机这个通道的二进制和官方现在提供的 <版本号> 是不是同一个构建。
-# 只比版本号不够：v6 的 rc 自报的也是 v6.0.0，正式版发布后看起来就「已是最新」了。
-# 返回 0：不同，值得更新；1：相同；2：没下载到官方的，没法比
-snell_binary_differs_from_release() {   # <通道> <版本号>
+# Проверка, отличается ли локальный бинарный файл этого канала от официальной сборки <версия>.
+# Сравнения только номера версии недостаточно: релиз-кандидаты (rc) v6 тоже сообщают версию v6.0.0, и после выхода релиза кажется, что «уже установлена последняя версия».
+# Возвращает 0: отличаются, стоит обновить; 1: идентичны; 2: не удалось скачать официальный файл для сравнения
+snell_binary_differs_from_release() {   # <канал> <версия>
     local version="$1" resolved="$2" target tmp_dir rc=2
     target=$(snell_binary_for_version "$version")
     [ -x "$target" ] || return 0
@@ -840,8 +840,8 @@ snell_binary_differs_from_release() {   # <通道> <版本号>
     return $rc
 }
 
-# 下载指定通道的二进制到版本化路径。force=true 时即使已存在也重新下载。
-# 只往 stderr 打印进度，stdout 留给调用方使用。
+# Скачивание бинарного файла указанного канала по версионированному пути. При force=true скачивает заново даже при наличии файла.
+# Прогресс выводится только в stderr, stdout остается для вызывающей функции.
 install_snell_binary_for_version() {
     local version="$1"
     local force="${2:-false}"
@@ -855,7 +855,7 @@ install_snell_binary_for_version() {
     local resolved
     resolved=$(resolve_latest_version_for_channel "$version")
     if [ -z "$resolved" ]; then
-        echo -e "${RED}无法确定 Snell ${version} 的版本号${RESET}" >&2
+        echo -e "${RED}Не удалось определить номер версии для Snell ${version}${RESET}" >&2
         return 1
     fi
 
@@ -866,31 +866,31 @@ install_snell_binary_for_version() {
         return 1
     fi
 
-    # install 是原子替换，正在运行的旧进程持有旧 inode，不受影响
+    # Команда install выполняет атомарную замену: запущенные старые процессы продолжают удерживать старый inode без сбоев
     if ! install -m 755 "${tmp_dir}/snell-server" "$target"; then
-        echo -e "${RED}写入 ${target} 失败${RESET}" >&2
+        echo -e "${RED}Ошибка записи в ${target}${RESET}" >&2
         rm -rf "$tmp_dir"
         return 1
     fi
     rm -rf "$tmp_dir"
 
-    # 落盘后核验：装进来的确实是这个通道
+    # Проверка после сохранения на диск: убеждаемся, что установлена именно нужная версия канала
     local actual
     actual=$(probe_snell_binary_version "$target")
     if [ "$actual" != "$version" ]; then
-        echo -e "${YELLOW}警告：${target} 自报版本为 ${actual}，与预期的 ${version} 不一致${RESET}" >&2
+        echo -e "${YELLOW}Внимание: ${target} сообщает версию ${actual}, что не совпадает с ожидаемой ${version}${RESET}" >&2
     fi
 
-    echo -e "${GREEN}✓ Snell ${version} (${resolved}) 已就位: ${target}${RESET}" >&2
+    echo -e "${GREEN}✓ Snell ${version} (${resolved}) установлен: ${target}${RESET}" >&2
     return 0
 }
 
-# 确保指定通道可用，缺失时自动下载
+# Гарантирует наличие бинарного файла для указанного канала (скачивает при отсутствии)
 ensure_snell_binary() {
     install_snell_binary_for_version "$1" "false"
 }
 
-# 主服务应使用的二进制路径（标记缺失或二进制未就位时回落到软链）
+# Путь к бинарному файлу для основной службы (при отсутствии метки или версионированного файла возвращает символьную ссылку)
 main_snell_binary() {
     local version target
     version=$(get_conf_snell_version "$SNELL_CONF_FILE")
@@ -902,8 +902,8 @@ main_snell_binary() {
     fi
 }
 
-# 把 unit 的 ExecStart 从裸 snell-server 切到版本化二进制。
-# 已经是版本化路径的会被跳过（模式带尾随空格，不会命中 snell-server-v5），因此可重复执行。
+# Переключение ExecStart в юнитах с обычного snell-server на версионированный бинарный файл.
+# Уже переключенные пути пропускаются (шаблон содержит пробел в конце и не затрагивает snell-server-v5), поэтому функцию можно вызывать повторно.
 sync_service_units_to_versioned_binary() {
     local changed=false
     local conf_file port unit version target
@@ -940,11 +940,11 @@ sync_service_units_to_versioned_binary() {
 
     if [ "$changed" = "true" ]; then
         systemctl daemon-reload 2>/dev/null || true
-        echo -e "${GREEN}✓ systemd 服务已切换到版本化二进制路径${RESET}"
+        echo -e "${GREEN}✓ Службы systemd переключены на версионированные пути бинарных файлов${RESET}"
     fi
 }
 
-# 把一个 unit 的 ExecStart 指到目标通道的二进制（用于切换用户版本）
+# Перенаправление ExecStart в юните на бинарный файл целевого канала (используется при смене версии пользователя)
 point_service_unit_to_version() {
     local unit="$1"
     local version="$2"
@@ -957,8 +957,8 @@ point_service_unit_to_version() {
     sed -i -E "s|ExecStart=${INSTALL_DIR}/snell-server(-v[456])? |ExecStart=${target} |" "$unit"
 }
 
-# 老布局（唯一的 /usr/local/bin/snell-server 实体文件）迁移到按通道分开存。
-# 幂等：已经是软链且配置都带标记时，什么都不做。
+# Миграция со старой структуры (единый файл /usr/local/bin/snell-server) на раздельное хранение по каналам версий.
+# Идемпотентно: если это уже символьная ссылка и все конфигурации размечены — ничего не делает.
 migrate_snell_binary_layout() {
     local snell_bin="${INSTALL_DIR}/snell-server"
     local main_version=""
@@ -967,21 +967,21 @@ migrate_snell_binary_layout() {
         local detected versioned
         detected=$(probe_snell_binary_version "$snell_bin")
         if [ "$detected" = "unknown" ]; then
-            echo -e "${YELLOW}无法识别 ${snell_bin} 的版本，跳过二进制布局迁移${RESET}"
+            echo -e "${YELLOW}Не удалось определить версию ${snell_bin}, миграция структуры бинарных файлов пропущена${RESET}"
             return 1
         fi
 
         versioned=$(snell_binary_for_version "$detected")
-        echo -e "${CYAN}检测到旧的单版本布局，正在迁移为多版本布局...${RESET}"
+        echo -e "${CYAN}Обнаружена старая одноверсионная структура, выполняется миграция на мультиверсионную...${RESET}"
         if [ ! -e "$versioned" ]; then
             if ! cp -a "$snell_bin" "$versioned"; then
-                echo -e "${RED}复制二进制到 ${versioned} 失败，已保留原布局${RESET}"
+                echo -e "${RED}Не удалось скопировать бинарный файл в ${versioned}, сохранена прежняя структура${RESET}"
                 return 1
             fi
         fi
         chmod 755 "$versioned" 2>/dev/null || true
         ln -sfn "$versioned" "$snell_bin"
-        echo -e "${GREEN}✓ ${snell_bin} 现在指向 ${versioned}（Snell ${detected}）${RESET}"
+        echo -e "${GREEN}✓ ${snell_bin} теперь указывает на ${versioned} (Snell ${detected})${RESET}"
         main_version="$detected"
     elif [ -L "$snell_bin" ]; then
         main_version=$(probe_snell_binary_version "$snell_bin")
@@ -989,7 +989,7 @@ migrate_snell_binary_layout() {
 
     [ "$main_version" = "unknown" ] && main_version=""
 
-    # 给还没有版本标记的配置补上（老安装里所有用户必然同版本）
+    # Добавление меток версии в файлы конфигурации, где их еще нет (в старой установке все пользователи заведомо одной версии)
     if [ -n "$main_version" ] && [ -d "${SNELL_CONF_DIR}/users" ]; then
         local conf_file
         for conf_file in "${SNELL_CONF_DIR}/users"/*.conf; do
@@ -998,7 +998,7 @@ migrate_snell_binary_layout() {
                 continue
             fi
             if set_conf_snell_version "$conf_file" "$main_version"; then
-                echo -e "${GREEN}✓ 已为 $(basename "$conf_file") 标记版本 ${main_version}${RESET}"
+                echo -e "${GREEN}✓ Для $(basename "$conf_file") добавлена метка версии ${main_version}${RESET}"
             fi
         done
     fi
@@ -1025,7 +1025,7 @@ ensure_snell_config_dir() {
         chown -R "${SNELL_SERVICE_USER}:${SNELL_SERVICE_GROUP}" "${SNELL_CONF_DIR}" 2>/dev/null || true
     fi
     chmod 755 "${SNELL_CONF_DIR}" "${SNELL_CONF_DIR}/users" 2>/dev/null || true
-    # 存有 PSK 的配置文件仅属主可读写
+    # Файлы конфигурации с ключами PSK доступны для чтения и записи только владельцу
     find "${SNELL_CONF_DIR}/users" -maxdepth 1 -name "*.conf" -exec chmod 600 {} + 2>/dev/null || true
 }
 
@@ -1042,21 +1042,21 @@ migrate_legacy_main_config_if_needed() {
             chown "${SNELL_SERVICE_USER}:${SNELL_SERVICE_GROUP}" "$SNELL_CONF_FILE" 2>/dev/null || true
         fi
         chmod 644 "$SNELL_CONF_FILE"
-        echo -e "${GREEN}已将旧配置迁移到 ${SNELL_CONF_FILE}${RESET}"
+        echo -e "${GREEN}Старая конфигурация перенесена в ${SNELL_CONF_FILE}${RESET}"
         return 0
     fi
 
     return 1
 }
 
-# 获取所有 Snell 用户配置
+# Получение конфигураций всех пользователей Snell
 get_all_snell_users() {
-    # 检查用户配置目录是否存在
+    # Проверка существования директории пользовательских конфигураций
     if [ ! -d "${SNELL_CONF_DIR}/users" ]; then
         return 1
     fi
     
-    # 首先获取主用户配置
+    # Сначала получаем конфигурацию основного пользователя
     local main_port=""
     local main_psk=""
     if [ -f "${SNELL_CONF_DIR}/users/snell-main.conf" ]; then
@@ -1067,7 +1067,7 @@ get_all_snell_users() {
         fi
     fi
     
-    # 获取其他用户配置
+    # Получаем конфигурации остальных пользователей
     for user_conf in "${SNELL_CONF_DIR}/users"/snell-*.conf; do
         if [ -f "$user_conf" ] && [[ "$user_conf" != *"snell-main.conf" ]]; then
             local port=$(grep -E '^listen' "$user_conf" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p')
@@ -1080,9 +1080,9 @@ get_all_snell_users() {
 }
 
 # =========================================
-# Snell 版本管理：按通道更新 / 追加通道 / 切换用户通道
+# Управление версиями Snell: обновление по каналам / добавление канала / переключение канала пользователя
 # =========================================
-# 读取某通道二进制自报的具体版本号（如 v5.0.1）
+# Чтение точного номера версии, сообщаемого бинарным файлом канала (например, v5.0.1)
 get_channel_binary_version() {
     local version="$1"
     local binary
@@ -1092,7 +1092,7 @@ get_channel_binary_version() {
     local detail
     detail=$("$binary" --v 2>&1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9]*' | head -n 1)
     if [ -z "$detail" ]; then
-        # 早期 v4 的 --v 不打印版本号，用内置常量兜底
+        # В ранних v4 флаг --v не выводил номер версии, используем встроенную константу как резервный вариант
         case "$version" in
             v4) detail="$SNELL_V4_FALLBACK" ;;
             v5) detail="$SNELL_V5_FALLBACK" ;;
@@ -1102,13 +1102,13 @@ get_channel_binary_version() {
     echo "$detail"
 }
 
-# 重启服务并确认真的起来了；起不来打印日志尾部，不让用户自己翻
+# Перезапуск службы с проверкой успешного старта; при сбое выводит конец журнала логов, чтобы пользователю не пришлось искать вручную
 restart_and_verify_service() {
     local service="$1"
     local waited=0
 
     if ! systemctl restart "$service" 2>/dev/null; then
-        echo -e "${RED}systemctl restart ${service} 返回失败${RESET}"
+        echo -e "${RED}Команда systemctl restart ${service} завершилась с ошибкой${RESET}"
         journalctl -u "$service" -n 30 --no-pager 2>/dev/null | sed 's/^/   /'
         return 1
     fi
@@ -1117,7 +1117,7 @@ restart_and_verify_service() {
         if systemctl is-active --quiet "$service"; then
             return 0
         fi
-        # socket 激活场景下主服务按需拉起，socket 活着即视为正常
+        # При активации через сокет основная служба поднимается по требованию; если активен snell.socket — считаем состояние нормальным
         if [ "$service" = "snell" ] && systemctl is-active --quiet snell.socket; then
             return 0
         fi
@@ -1125,12 +1125,12 @@ restart_and_verify_service() {
         waited=$((waited + 1))
     done
 
-    echo -e "${RED}${service} 在 ${waited} 秒内未进入 active 状态${RESET}"
+    echo -e "${RED}Служба ${service} не перешла в состояние active в течение ${waited} сек.${RESET}"
     journalctl -u "$service" -n 30 --no-pager 2>/dev/null | sed 's/^/   /'
     return 1
 }
 
-# 写用户的 systemd 单元，ExecStart 指向该用户所选通道的二进制
+# Запись юнита systemd для пользователя, где ExecStart указывает на бинарный файл выбранного канала
 write_user_service_unit() {
     local port="$1"
     local user_conf="$2"
@@ -1159,8 +1159,8 @@ WantedBy=multi-user.target
 EOF
 }
 
-# 切换/回滚用的备份统一放在 ${SNELL_CONF_DIR}/backup 下。
-# 不能放进 users/ —— 多处循环是按 users/* 遍历的，备份文件会被当成真实用户。
+# Резервные копии для переключения/отката сохраняются в ${SNELL_CONF_DIR}/backup.
+# Их нельзя класть в users/, так как многие циклы перебирают users/* и приняли бы бэкап за реального пользователя.
 snell_backup_path() {
     local src="$1"
     local stamp="$2"
@@ -1169,8 +1169,8 @@ snell_backup_path() {
     echo "${dir}/$(basename "$src").${stamp}"
 }
 
-# === 新增：备份和还原配置函数 ===
-# 备份 Snell 配置（只保留最近 10 个备份，避免越积越多）
+# === Функции резервного копирования и восстановления конфигурации ===
+# Резервное копирование конфигурации Snell (хранятся только последние 10 копий, чтобы не накапливались)
 backup_snell_config() {
     local backup_dir="${SNELL_CONF_DIR}/backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
@@ -1181,35 +1181,35 @@ backup_snell_config() {
 
 
 # ── lib/conf.sh ───────────────────────────────────────────────────────────────
-# 用户配置：选版本与 v6 参数、写入与迁移配置、端口 / DNS / IPv6 输入、Surge 配置行。
-# snell.sh、multi-user.sh 共用（bash）。
+# Пользовательская конфигурация: выбор версии и параметров v6, запись и миграция конфигов, ввод порта / DNS / IPv6, строки конфигурации для Surge.
+# Используется совместно в snell.sh и multi-user.sh (bash).
 
-# 全局变量：选择的 Snell 版本
+# Глобальная переменная: выбранная версия Snell
 SNELL_VERSION_CHOICE=""
 
-# Snell v6 加密模式：default / unshaped / unsafe-raw（客户端必须与服务端一致）
+# Режим шифрования Snell v6: default / unshaped / unsafe-raw (на клиенте и сервере должен совпадать)
 SNELL_MODE="default"
 
-# Snell v6 DNS 解析地址族偏好：default / prefer-ipv4 / prefer-ipv6 / ipv4-only / ipv6-only
-# 留空表示跟随 IPv6 开关自动推导
+# Предпочтение семейства адресов при разрешении DNS в Snell v6: default / prefer-ipv4 / prefer-ipv6 / ipv4-only / ipv6-only
+# Если пусто — определяется автоматически на основе переключателя IPv6
 SNELL_DNS_IP_PREFERENCE=""
 
-# 标记用户是否在本次操作中显式选择过 v6 参数（影响升级时是否覆盖已有配置）
+# Флаг того, выбирал ли пользователь параметры v6 вручную в текущей операции (влияет на то, перезаписывать ли существующие настройки при обновлении)
 SNELL_V6_OPTIONS_SET="false"
 
 IPV6_ENABLE="true"
 
-# Snell v6 的 PSK 必须是 12 到 255 个字节，否则 snell-server 拒绝启动
+# Длина PSK в Snell v6 должна быть от 12 до 255 байт, иначе snell-server откажется запускаться
 SNELL_V6_PSK_MIN=12
 SNELL_V6_PSK_MAX=255
 
-# 选了 v6 时提醒一次
+# Памятка при выборе версии v6
 snell_v6_notes() {
-    echo -e "${YELLOW}v6 只接受 version = 6 的客户端（v4 / v5 的客户端连不上），客户端的 mode 也要和服务端一样${RESET}"
-    echo -e "${YELLOW}v6 已移除 QUIC 代理模式与 obfs，且不提供 armv7l 构建${RESET}"
+    echo -e "${YELLOW}v6 принимает только клиентов с version = 6 (клиенты v4 / v5 подключиться не смогут), а параметр mode на клиенте должен совпадать с серверным${RESET}"
+    echo -e "${YELLOW}В v6 удалены режим проксирования QUIC и параметр obfs, а также отсутствуют сборки для armv7l${RESET}"
 }
 
-# 配置里的 PSK 能不能给 v6 用；不能时说明原因并返回 1
+# Проверка, подходит ли PSK из конфигурации для v6; если нет — выводит причину и возвращает 1
 check_conf_psk_for_v6() {   # <conf>
     local psk len
     psk=$(grep -E '^[[:space:]]*psk[[:space:]]*=' "$1" 2>/dev/null | head -n 1 \
@@ -1218,54 +1218,54 @@ check_conf_psk_for_v6() {   # <conf>
     if [ "$len" -ge "$SNELL_V6_PSK_MIN" ] && [ "$len" -le "$SNELL_V6_PSK_MAX" ]; then
         return 0
     fi
-    echo -e "${RED}这个用户的 PSK 有 ${len} 个字节，Snell v6 要求 ${SNELL_V6_PSK_MIN} 到 ${SNELL_V6_PSK_MAX} 个字节，否则服务起不来${RESET}"
-    echo -e "${YELLOW}请先给它换一个 PSK（主菜单「修改端口 / PSK / DNS」，直接回车会随机生成 20 位），再切到 v6${RESET}"
+    echo -e "${RED}Длина PSK этого пользователя составляет ${len} байт, а Snell v6 требует от ${SNELL_V6_PSK_MIN} до ${SNELL_V6_PSK_MAX} байт, иначе служба не запустится${RESET}"
+    echo -e "${YELLOW}Пожалуйста, сначала смените PSK (в главном меню «Изменить порт / PSK / DNS», нажатие Enter сгенерирует случайный ключ из 20 символов), а затем переключайтесь на v6${RESET}"
     return 1
 }
 
-# listen 里每个地址的端口都从 <旧端口> 换成 <新端口>。
-# v6 的 listen 可以是逗号隔开的多个地址（listen = 0.0.0.0:7177,[::]:7177），只改最后一个会让两个地址端口不一致
-listen_replace_port() {   # <listen 的值> <旧端口> <新端口>
+# Замена порта во всех адресах параметра listen со <старый порт> на <новый порт>.
+# В v6 параметр listen может содержать несколько адресов через запятую (listen = 0.0.0.0:7177,[::]:7177), замена только последнего привела бы к рассинхронизации портов
+listen_replace_port() {   # <значение listen> <старый порт> <новый порт>
     printf '%s\n' "$1" | awk -v o="$2" -v n="$3" 'BEGIN { FS = OFS = "," }
         { for (i = 1; i <= NF; i++) sub(":" o "[[:space:]]*$", ":" n, $i); print }'
 }
 
-# === 新增：版本选择函数 ===
-# 选择 Snell 版本
+# === Функция выбора версии ===
+# Выбор версии Snell для установки
 select_snell_version() {
-    echo -e "${CYAN}请选择要安装的 Snell 版本：${RESET}"
+    echo -e "${CYAN}Выберите версию Snell для установки:${RESET}"
     echo -e "${GREEN}1.${RESET} Snell v4"
     echo -e "${GREEN}2.${RESET} Snell v5"
     echo -e "${GREEN}3.${RESET} Snell v6"
 
     while true; do
-        read -rp "请输入选项 [1-3]: " version_choice
+        read -rp "Выберите вариант [1-3]: " version_choice
         case "$version_choice" in
             1)
                 SNELL_VERSION_CHOICE="v4"
-                echo -e "${GREEN}已选择 Snell v4${RESET}"
+                echo -e "${GREEN}Выбран Snell v4${RESET}"
                 break
                 ;;
             2)
                 SNELL_VERSION_CHOICE="v5"
-                echo -e "${GREEN}已选择 Snell v5${RESET}"
+                echo -e "${GREEN}Выбран Snell v5${RESET}"
                 break
                 ;;
             3)
                 SNELL_VERSION_CHOICE="v6"
-                echo -e "${GREEN}已选择 Snell v6${RESET}"
+                echo -e "${GREEN}Выбран Snell v6${RESET}"
                 snell_v6_notes
                 break
                 ;;
             *)
-                echo -e "${RED}请输入正确的选项 [1-3]${RESET}"
+                echo -e "${RED}Пожалуйста, введите корректный вариант [1-3]${RESET}"
                 ;;
         esac
     done
 }
 
-# === Snell v6 参数选择 ===
-# 加密模式 (mode)：客户端必须配置完全相同的值，否则无法连接
+# === Выбор параметров Snell v6 ===
+# Режим шифрования (mode): на клиенте должно быть указано точно такое же значение, иначе подключение не установится
 select_snell_v6_mode() {
     local current="$1"
     local default_choice="1"
@@ -1274,45 +1274,45 @@ select_snell_v6_mode() {
         unsafe-raw) default_choice="3" ;;
     esac
 
-    echo -e "\n${CYAN}=== Snell v6 加密模式 (mode) ===${RESET}"
-    echo -e "${YELLOW}客户端必须配置与服务端完全相同的 mode，不一致将无法连接${RESET}\n"
-    echo -e "${GREEN}1.${RESET} default     流量混淆 + AES 加密"
-    echo -e "   特征伪装最完整，抗识别与抗封锁能力最强"
-    echo -e "   ${CYAN}建议：绝大多数用户、线路存在干扰或 QoS 时选此项${RESET}"
-    echo -e "${GREEN}2.${RESET} unshaped    关闭混淆，仅 AES 加密"
-    echo -e "   吞吐相比 default 提升约 10%，但流量特征更明显"
-    echo -e "   ${CYAN}建议：线路干净、以速度为先，或已叠加 ShadowTLS 等外层伪装时选此项${RESET}"
-    echo -e "${GREEN}3.${RESET} unsafe-raw  明文转发，不加密不混淆"
-    echo -e "   ${RED}数据可被完整还原，公网环境切勿使用${RESET}"
-    echo -e "   ${CYAN}建议：仅用于内网或完全可信链路的性能测试${RESET}\n"
+    echo -e "\n${CYAN}=== Режим шифрования Snell v6 (mode) ===${RESET}"
+    echo -e "${YELLOW}На клиенте должен быть настроен точно такой же mode, как на сервере, иначе подключение невозможно${RESET}\n"
+    echo -e "${GREEN}1.${RESET} default     Обфускация трафика + шифрование AES"
+    echo -e "   Максимальная маскировка сигнатур трафика и устойчивость к блокировкам"
+    echo -e "   ${CYAN}Рекомендуется: для большинства пользователей, а также при наличии помех или QoS на линии${RESET}"
+    echo -e "${GREEN}2.${RESET} unshaped    Без обфускации, только шифрование AES"
+    echo -e "   Пропускная способность выше примерно на 10% по сравнению с default, но характер трафика заметнее"
+    echo -e "   ${CYAN}Рекомендуется: для чистых каналов с приоритетом скорости или при использовании внешней маскировки (например, ShadowTLS)${RESET}"
+    echo -e "${GREEN}3.${RESET} unsafe-raw  Передача открытым текстом, без шифрования и обфускации"
+    echo -e "   ${RED}Передаваемые данные легко перехватываются, ни в коем случае не используйте в публичных сетях!${RESET}"
+    echo -e "   ${CYAN}Рекомендуется: только для тестирования производительности во внутренней или полностью доверенной сети${RESET}\n"
 
     while true; do
-        read -rp "请选择加密模式 [1-3]（回车使用 ${default_choice}）: " mode_choice
+        read -rp "Выберите режим шифрования [1-3] (Enter — вариант ${default_choice}): " mode_choice
         [ -z "$mode_choice" ] && mode_choice="$default_choice"
         case "$mode_choice" in
             1) SNELL_MODE="default";    break ;;
             2) SNELL_MODE="unshaped";   break ;;
             3)
                 SNELL_MODE="unsafe-raw"
-                echo -e "${RED}警告：unsafe-raw 为明文传输，请确认该链路完全可信！${RESET}"
-                read -rp "确认使用 unsafe-raw? [y/N]: " raw_confirm
+                echo -e "${RED}Внимание: unsafe-raw передает данные открытым текстом! Убедитесь, что канал полностью доверенный.${RESET}"
+                read -rp "Подтверждаете использование unsafe-raw? [y/N]: " raw_confirm
                 case "$raw_confirm" in
                     [yY]|[yY][eE][sS]) break ;;
-                    *) echo -e "${CYAN}已取消，请重新选择${RESET}" ;;
+                    *) echo -e "${CYAN}Отменено, пожалуйста, выберите другой вариант${RESET}" ;;
                 esac
                 ;;
-            *) echo -e "${RED}请输入正确的选项 [1-3]${RESET}" ;;
+            *) echo -e "${RED}Пожалуйста, введите корректный вариант [1-3]${RESET}" ;;
         esac
     done
-    echo -e "${GREEN}已选择 mode = ${SNELL_MODE}${RESET}"
+    echo -e "${GREEN}Выбран mode = ${SNELL_MODE}${RESET}"
 }
 
-# DNS 解析地址族偏好 (dns-ip-preference)：影响服务端解析目标域名后用哪种地址出站
+# Предпочтение семейства адресов при разрешении DNS (dns-ip-preference): определяет, какой протокол сервер выберет для исходящего соединения после резолва домена
 select_snell_v6_dns_preference() {
     local current="$1"
     local default_choice="1"
 
-    # 未指定时按 IPv6 开关推导默认值
+    # Если не задано, определяем значение по умолчанию на основе переключателя IPv6
     if [ -z "$current" ]; then
         [ "$IPV6_ENABLE" = "false" ] && default_choice="4"
     else
@@ -1325,21 +1325,21 @@ select_snell_v6_dns_preference() {
         esac
     fi
 
-    echo -e "\n${CYAN}=== Snell v6 DNS 解析偏好 (dns-ip-preference) ===${RESET}"
-    echo -e "${YELLOW}控制服务端解析目标域名后优先使用哪种地址族出站，与监听地址无关${RESET}\n"
-    echo -e "${GREEN}1.${RESET} default       跟随系统默认解析行为"
-    echo -e "   ${CYAN}建议：不确定时选此项，适配绝大多数 VPS${RESET}"
-    echo -e "${GREEN}2.${RESET} prefer-ipv4   双栈可用时优先 IPv4，失败再试 IPv6"
-    echo -e "   ${CYAN}建议：IPv6 出口质量差、或目标站点 IPv6 解锁较差时${RESET}"
-    echo -e "${GREEN}3.${RESET} prefer-ipv6   双栈可用时优先 IPv6，失败再试 IPv4"
-    echo -e "   ${CYAN}建议：IPv6 线路更优，或需要 IPv6 解锁流媒体时${RESET}"
-    echo -e "${GREEN}4.${RESET} ipv4-only     只使用 IPv4 解析结果"
-    echo -e "   ${CYAN}建议：VPS 无 IPv6 出口，避免连接 IPv6 目标时超时等待${RESET}"
-    echo -e "${GREEN}5.${RESET} ipv6-only     只使用 IPv6 解析结果"
-    echo -e "   ${CYAN}建议：IPv6 Only 的 VPS（无 IPv4 出口）${RESET}\n"
+    echo -e "\n${CYAN}=== Предпочтение разрешения DNS в Snell v6 (dns-ip-preference) ===${RESET}"
+    echo -e "${YELLOW}Определяет приоритет протокола (IPv4/IPv6) для исходящих соединений сервера после разрешения целевого домена (не влияет на адрес прослушивания)${RESET}\n"
+    echo -e "${GREEN}1.${RESET} default       Следовать системному поведению по умолчанию"
+    echo -e "   ${CYAN}Рекомендуется: выбирайте при сомнениях, подходит для большинства VPS${RESET}"
+    echo -e "${GREEN}2.${RESET} prefer-ipv4   Приоритет IPv4 при наличии обоих стеков, переход на IPv6 при сбое"
+    echo -e "   ${CYAN}Рекомендуется: если маршрут IPv6 хуже по качеству или хуже открывает целевые сайты${RESET}"
+    echo -e "${GREEN}3.${RESET} prefer-ipv6   Приоритет IPv6 при наличии обоих стеков, переход на IPv4 при сбое"
+    echo -e "   ${CYAN}Рекомендуется: если маршрут IPv6 лучше или нужен для разблокировки стриминговых сервисов${RESET}"
+    echo -e "${GREEN}4.${RESET} ipv4-only     Использовать только результаты разрешения IPv4"
+    echo -e "   ${CYAN}Рекомендуется: если на VPS нет выхода в IPv6 (позволяет избежать таймаутов при попытке подключения к IPv6)${RESET}"
+    echo -e "${GREEN}5.${RESET} ipv6-only     Использовать только результаты разрешения IPv6"
+    echo -e "   ${CYAN}Рекомендуется: для IPv6-only VPS (без выхода в IPv4)${RESET}\n"
 
     while true; do
-        read -rp "请选择 DNS 解析偏好 [1-5]（回车使用 ${default_choice}）: " dns_pref_choice
+        read -rp "Выберите предпочтение DNS [1-5] (Enter — вариант ${default_choice}): " dns_pref_choice
         [ -z "$dns_pref_choice" ] && dns_pref_choice="$default_choice"
         case "$dns_pref_choice" in
             1) SNELL_DNS_IP_PREFERENCE="default";     break ;;
@@ -1347,13 +1347,13 @@ select_snell_v6_dns_preference() {
             3) SNELL_DNS_IP_PREFERENCE="prefer-ipv6"; break ;;
             4) SNELL_DNS_IP_PREFERENCE="ipv4-only";   break ;;
             5) SNELL_DNS_IP_PREFERENCE="ipv6-only";   break ;;
-            *) echo -e "${RED}请输入正确的选项 [1-5]${RESET}" ;;
+            *) echo -e "${RED}Пожалуйста, введите корректный вариант [1-5]${RESET}" ;;
         esac
     done
-    echo -e "${GREEN}已选择 dns-ip-preference = ${SNELL_DNS_IP_PREFERENCE}${RESET}"
+    echo -e "${GREEN}Выбрано dns-ip-preference = ${SNELL_DNS_IP_PREFERENCE}${RESET}"
 }
 
-# 统一入口：安装 v6 或升级到 v6 时调用，可传入现有配置文件以沿用当前取值
+# Единая точка входа: вызывается при установке v6 или обновлении до v6; можно передать существующий файл конфигурации для подстановки текущих значений
 configure_snell_v6_options() {
     local conf_file="$1"
     local current_mode="" current_pref=""
@@ -1362,7 +1362,7 @@ configure_snell_v6_options() {
         current_mode=$(grep -E '^[[:space:]]*mode[[:space:]]*=' "$conf_file" | head -n 1 | awk -F'=' '{print $2}' | tr -d ' ')
         current_pref=$(grep -E '^[[:space:]]*dns-ip-preference[[:space:]]*=' "$conf_file" | head -n 1 | awk -F'=' '{print $2}' | tr -d ' ')
         if [ -n "$current_mode" ] || [ -n "$current_pref" ]; then
-            echo -e "${CYAN}检测到当前配置：mode = ${current_mode:-未设置}，dns-ip-preference = ${current_pref:-未设置}${RESET}"
+            echo -e "${CYAN}Обнаружена текущая конфигурация: mode = ${current_mode:-не задано}, dns-ip-preference = ${current_pref:-не задано}${RESET}"
         fi
     fi
 
@@ -1370,13 +1370,13 @@ configure_snell_v6_options() {
     select_snell_v6_dns_preference "$current_pref"
     SNELL_V6_OPTIONS_SET="true"
 
-    echo -e "\n${CYAN}=== v6 参数确认 ===${RESET}"
-    echo -e "${GREEN}服务端 mode              : ${SNELL_MODE}${RESET}"
-    echo -e "${GREEN}服务端 dns-ip-preference : ${SNELL_DNS_IP_PREFERENCE}${RESET}"
-    echo -e "${YELLOW}客户端对应配置：version = 6, mode = ${SNELL_MODE}${RESET}"
+    echo -e "\n${CYAN}=== Подтверждение параметров v6 ===${RESET}"
+    echo -e "${GREEN}Серверный mode              : ${SNELL_MODE}${RESET}"
+    echo -e "${GREEN}Серверный dns-ip-preference : ${SNELL_DNS_IP_PREFERENCE}${RESET}"
+    echo -e "${YELLOW}Соответствующая настройка клиента: version = 6, mode = ${SNELL_MODE}${RESET}"
 }
 
-# 读取已安装 v6 服务端使用的 mode（读不到时回落到默认值）
+# Чтение параметра mode из установленного сервера v6 (при отсутствии возвращает значение по умолчанию)
 get_snell_mode() {
     local conf_file="${1:-${SNELL_CONF_DIR}/users/snell-main.conf}"
     local mode=""
@@ -1389,8 +1389,8 @@ get_snell_mode() {
     echo "$mode"
 }
 
-# 生成 snell-server 配置文件
-# v6 使用 mode / dns-ip-preference；ipv6 参数在 v6 已废弃（false 等价 ipv4-only）
+# Генерация конфигурационного файла snell-server
+# В v6 используются mode / dns-ip-preference; параметр ipv6 в v6 устарел (false эквивалентно ipv4-only)
 write_snell_conf() {
     local conf_file="$1"
     local listen_addr="$2"
@@ -1422,14 +1422,14 @@ write_snell_conf() {
         echo "dns = ${dns}"
     } > "$conf_file"
 
-    # PSK 是共享密钥：仅属主可读写，避免本机其他用户读取
+    # PSK — общий секретный ключ: чтение и запись только для владельца, чтобы другие пользователи системы не могли его прочитать
     chmod 600 "$conf_file" 2>/dev/null || true
     if getent passwd "${SNELL_SERVICE_USER}" >/dev/null 2>&1; then
         chown "${SNELL_SERVICE_USER}:${SNELL_SERVICE_GROUP}" "$conf_file" 2>/dev/null || true
     fi
 }
 
-# 版本切换后同步配置文件参数：v6 用 mode / dns-ip-preference，v4/v5 用 ipv6
+# Синхронизация параметров конфигурационного файла после смены версии: для v6 — mode / dns-ip-preference, для v4/v5 — ipv6
 migrate_snell_conf_for_version() {
     local conf_file="$1"
     local version_choice="$2"
@@ -1441,7 +1441,7 @@ migrate_snell_conf_for_version() {
         ipv6_enable="false"
     fi
 
-    # 沿用配置中已有的 v6 参数；仅当用户本次显式选择过才覆盖
+    # Сохраняем уже имеющиеся в конфиге параметры v6; перезаписываем только если пользователь явно выбирал их в текущей операции
     local target_mode target_pref
     target_mode=$(grep -E '^[[:space:]]*mode[[:space:]]*=' "$conf_file" | head -n 1 | awk -F'=' '{print $2}' | tr -d ' ')
     target_pref=$(grep -E '^[[:space:]]*dns-ip-preference[[:space:]]*=' "$conf_file" | head -n 1 | awk -F'=' '{print $2}' | tr -d ' ')
@@ -1471,23 +1471,23 @@ migrate_snell_conf_for_version() {
         fi
     } > "$tmp_conf" || {
         rm -f "$tmp_conf"
-        echo -e "${RED}生成配置失败: ${conf_file}${RESET}" >&2
+        echo -e "${RED}Не удалось сформировать конфигурацию: ${conf_file}${RESET}" >&2
         return 1
     }
 
-    # 用 cat 回写保留原文件属主与权限（服务以 snell 用户身份读取）
+    # Перезапись через cat для сохранения владельца и прав доступа исходного файла (служба читает его от имени пользователя snell)
     cat "$tmp_conf" > "$conf_file" || {
         rm -f "$tmp_conf"
-        echo -e "${RED}回写配置失败: ${conf_file}${RESET}" >&2
+        echo -e "${RED}Не удалось записать конфигурацию: ${conf_file}${RESET}" >&2
         return 1
     }
     rm -f "$tmp_conf"
 
-    # 通道归属随之更新，后续都以标记为准
+    # Обновляем метку принадлежности к каналу версии
     set_conf_snell_version "$conf_file" "$version_choice"
 }
 
-# 生成 Surge 配置格式
+# Генерация строки конфигурации в формате Surge
 generate_surge_config() {
     local ip_addr=$1
     local port=$2
@@ -1497,21 +1497,21 @@ generate_surge_config() {
     local installed_version=$6
 
     if [ "$installed_version" = "v6" ]; then
-        # v6 版本：v6 协议（已移除 QUIC 模式与 obfs），mode 必须与服务端一致
+        # Версия v6: протокол v6 (удалены режим QUIC и obfs), mode должен совпадать с серверным
         local mode
         mode=$(get_snell_mode "$(snell_conf_for_port "$port")")
         echo -e "${GREEN}${country} = snell, ${ip_addr}, ${port}, psk = ${psk}, version = 6, mode = ${mode}, reuse = true, tfo = true${RESET}"
     elif [ "$installed_version" = "v5" ]; then
-        # v5 版本输出 v4 和 v5 两种配置
+        # Для версии v5 выводим оба варианта конфигурации (v4 и v5)
         echo -e "${GREEN}${country} = snell, ${ip_addr}, ${port}, psk = ${psk}, version = 4, reuse = true, tfo = true${RESET}"
         echo -e "${GREEN}${country} = snell, ${ip_addr}, ${port}, psk = ${psk}, version = 5, reuse = true, tfo = true${RESET}"
     else
-        # v4 版本只输出 v4 配置
+        # Для версии v4 выводим только конфигурацию v4
         echo -e "${GREEN}${country} = snell, ${ip_addr}, ${port}, psk = ${psk}, version = 4, reuse = true, tfo = true${RESET}"
     fi
 }
 
-# 比较版本号（复用 snell_version_sort_key，正确处理 b4 / rc / rc2 / 正式版）
+# Сравнение номеров версий (использует snell_version_sort_key для корректной обработки b4 / rc / rc2 / релизов)
 version_greater_equal() {
     local key1 key2
     key1=$(snell_version_sort_key "$1")
@@ -1520,34 +1520,34 @@ version_greater_equal() {
     [[ "$key1" > "$key2" || "$key1" == "$key2" ]]
 }
 
-# 用户输入端口号，范围 1-65535
+# Запрос номера порта у пользователя в диапазоне 1-65535
 get_user_port() {
     while true; do
-        read -rp "请输入要使用的端口号 (1-65535): " PORT
+        read -rp "Введите желаемый номер порта (1-65535): " PORT
         if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
             if is_port_in_use "$PORT"; then
-                echo -e "${YELLOW}警告：端口 ${PORT} 当前已被占用${RESET}"
+                echo -e "${YELLOW}Внимание: порт ${PORT} сейчас уже занят${RESET}"
                 show_port_occupier "$PORT"
-                read -rp "仍要使用该端口吗? [y/N]: " port_confirm
+                read -rp "Все равно использовать этот порт? [y/N]: " port_confirm
                 case "$port_confirm" in
                     [yY]|[yY][eE][sS]) ;;
                     *)
-                        echo -e "${CYAN}请重新选择端口${RESET}"
+                        echo -e "${CYAN}Пожалуйста, выберите другой порт${RESET}"
                         continue
                         ;;
                 esac
             fi
-            echo -e "${GREEN}已选择端口: $PORT${RESET}"
+            echo -e "${GREEN}Выбран порт: $PORT${RESET}"
             break
         else
-            echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字。${RESET}"
+            echo -e "${RED}Недопустимый номер порта, введите число от 1 до 65535.${RESET}"
         fi
     done
 }
 
-# 获取系统DNS
+# Получение системных DNS-серверов
 get_system_dns() {
-    # 尝试从resolv.conf获取系统DNS
+    # Попытка получить системные DNS из /etc/resolv.conf
     if [ -f "/etc/resolv.conf" ]; then
         system_dns=$(grep -E '^nameserver' /etc/resolv.conf | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
         if [ ! -z "$system_dns" ]; then
@@ -1556,15 +1556,15 @@ get_system_dns() {
         fi
     fi
     
-    # 如果无法从resolv.conf获取，尝试使用公共DNS
+    # Если получить из resolv.conf не удалось, используем публичные DNS
     echo "1.1.1.1,8.8.8.8"
 }
 
-# 获取用户输入的 DNS 服务器
-# 校验单个 DNS 主机：IPv4 / IPv6 / 域名
+# Получение DNS-серверов от пользователя
+# Валидация одного хоста DNS: IPv4 / IPv6 / доменное имя
 validate_dns_host() {
     local host="$1"
-    # IPv4：四段数字，每段 0-255
+    # IPv4: четыре октета чисел от 0 до 255
     if [[ "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
         local seg old_ifs="$IFS"
         IFS='.'
@@ -1577,18 +1577,18 @@ validate_dns_host() {
         IFS="$old_ifs"
         return 0
     fi
-    # IPv6：含冒号的十六进制组（宽松校验，snell 侧会再解析）
+    # IPv6: шестнадцатеричные группы с двоеточиями (мягкая проверка, snell выполнит финальный парсинг сам)
     if [[ "$host" == *:* ]] && [[ "$host" =~ ^[0-9A-Fa-f:.]+$ ]]; then
         return 0
     fi
-    # 域名：字母数字点横线，不以点/横线开头结尾
+    # Доменное имя: буквы, цифры, точки и дефисы (не начинается и не заканчивается точкой или дефисом)
     if [[ "$host" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]]; then
         return 0
     fi
     return 1
 }
 
-# 校验 DNS 输入：允许英文逗号分隔的多个地址
+# Валидация строки ввода DNS: допускается несколько адресов через запятую
 validate_dns_input() {
     local dns_input="$1" item
     dns_input="${dns_input//[[:space:]]/}"
@@ -1605,44 +1605,44 @@ validate_dns_input() {
     return 0
 }
 
-# 获取用户输入的 DNS 服务器（校验 IPv4/IPv6/域名，非法输入要求重填）
+# Запрос DNS-серверов у пользователя (с проверкой формата IPv4/IPv6/домена и повторным запросом при ошибке)
 get_dns() {
     while true; do
-        read -rp "请输入 DNS 服务器地址 (直接回车使用系统DNS): " custom_dns
+        read -rp "Введите адреса DNS-серверов (нажмите Enter для использования системных DNS): " custom_dns
         if [ -z "$custom_dns" ]; then
             DNS=$(get_system_dns)
-            echo -e "${GREEN}使用系统 DNS 服务器: $DNS${RESET}"
+            echo -e "${GREEN}Используются системные DNS-серверы: $DNS${RESET}"
             return 0
         fi
         if validate_dns_input "$custom_dns"; then
             DNS="${custom_dns//[[:space:]]/}"
-            echo -e "${GREEN}使用自定义 DNS 服务器: $DNS${RESET}"
+            echo -e "${GREEN}Используются пользовательские DNS-серверы: $DNS${RESET}"
             return 0
         fi
-        echo -e "${RED}DNS 地址格式无效，请输入 IPv4/IPv6 地址或域名（多个请用英文逗号分隔）${RESET}"
+        echo -e "${RED}Неверный формат адреса DNS. Введите адреса IPv4/IPv6 или домены (несколько значений разделяйте запятой)${RESET}"
     done
 }
 
-# 是否启用 IPv6
+# Запрос включения IPv6
 get_ipv6_choice() {
     IPV6_ENABLE="true"
     LISTEN_ADDR="::0"
-    read -rp "是否启用 IPv6? [Y/n]: " ipv6_choice
+    read -rp "Включить поддержку IPv6? [Y/n]: " ipv6_choice
     case "$ipv6_choice" in
         [nN]|[nN][oO])
             IPV6_ENABLE="false"
             LISTEN_ADDR="0.0.0.0"
-            echo -e "${GREEN}已关闭 IPv6，仅监听 IPv4${RESET}"
+            echo -e "${GREEN}IPv6 отключен, прослушивается только IPv4${RESET}"
             ;;
         *)
-            echo -e "${GREEN}已启用 IPv6${RESET}"
+            echo -e "${GREEN}IPv6 включен${RESET}"
             ;;
     esac
 }
 
 
 
-# 读取主配置中的 dns-ip-preference（v6），读不到时按 ipv6 开关推导
+# Чтение dns-ip-preference (v6) из основной конфигурации; при отсутствии выводится из переключателя ipv6
 get_snell_dns_preference() {
     local ipv6_enable="$1"
     local conf_file="${2:-$SNELL_CONF_FILE}"
@@ -1660,7 +1660,7 @@ get_snell_dns_preference() {
     echo "$pref"
 }
 
-# 输出单条 Surge 配置（v6 需要带 mode）
+# Вывод строки конфигурации для Surge (для v6 требуется указать mode)
 print_surge_line() {
     local country="$1"
     local ip_addr="$2"
@@ -1678,20 +1678,20 @@ print_surge_line() {
     fi
 }
 
-# 检查 Snell 是否已安装
+# Проверка, установлен ли Snell
 check_snell_installed() {
     if ! command -v snell-server &> /dev/null && [ -z "$(list_installed_snell_versions)" ]; then
-        echo -e "${RED}未检测到 Snell 安装，请先安装 Snell。${RESET}"
+        echo -e "${RED}Установка Snell не обнаружена. Пожалуйста, сначала установите Snell.${RESET}"
         exit 1
     fi
 
-    # 旧的单版本布局先迁成按通道分开存，之后新增用户才能各自选版本
+    # Сначала мигрируем старую одноверсионную структуру на раздельное хранение по каналам, чтобы новые пользователи могли выбирать собственные версии
     if [ -e "${INSTALL_DIR}/snell-server" ]; then
         migrate_snell_binary_layout
     fi
 }
 
-# 获取主用户端口
+# Получение порта основного пользователя
 get_main_port() {
     if [ -f "${SNELL_CONF_FILE}" ]; then
         local main_port=$(grep -E '^listen' "${SNELL_CONF_FILE}" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p')
@@ -1699,14 +1699,14 @@ get_main_port() {
     fi
 }
 
-# 获取所有用户端口
+# Получение портов всех пользователей
 get_all_ports() {
-    # 检查用户配置目录是否存在
+    # Проверка существования директории пользовательских конфигураций
     if [ ! -d "${SNELL_CONF_DIR}/users" ]; then
         return 1
     fi
     
-    # 获取所有配置文件中的端口
+    # Получение портов из всех файлов конфигурации
     for conf_file in "${SNELL_CONF_DIR}/users"/snell-*.conf; do
         if [ -f "$conf_file" ]; then
             grep -E '^listen' "$conf_file" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p'
@@ -1714,9 +1714,9 @@ get_all_ports() {
     done | sort -n | uniq
 }
 
-# 列出所有用户
+# Вывод списка всех пользователей
 list_users() {
-    echo -e "\n${YELLOW}=== 当前用户列表 ===${RESET}"
+    echo -e "\n${YELLOW}=== Текущий список пользователей ===${RESET}"
     if [ -d "${SNELL_CONF_DIR}/users" ]; then
         local count=0
         for user_conf in "${SNELL_CONF_DIR}/users"/*; do
@@ -1725,25 +1725,25 @@ list_users() {
                 local port=$(grep -E '^listen' "$user_conf" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p')
                 local psk=$(grep -E '^psk' "$user_conf" | awk -F'=' '{print $2}' | tr -d ' ')
                 local version=$(get_conf_snell_version "$user_conf")
-                echo -e "${GREEN}用户 $count:${RESET}"
-                echo -e "端口: ${port}"
-                echo -e "版本: Snell ${version}"
-                echo -e "PSK: ${psk}"
-                echo -e "配置文件: ${user_conf}\n"
+                echo -e "${GREEN}Пользователь $count:${RESET}"
+                echo -e "Порт:             ${port}"
+                echo -e "Версия:           Snell ${version}"
+                echo -e "PSK:              ${psk}"
+                echo -e "Файл конфигурации: ${user_conf}\n"
             fi
         done
         if [ $count -eq 0 ]; then
-            echo -e "${YELLOW}当前没有配置的用户${RESET}"
+            echo -e "${YELLOW}Настроенных пользователей пока нет${RESET}"
         fi
     else
-        echo -e "${YELLOW}当前没有配置的用户${RESET}"
+        echo -e "${YELLOW}Настроенных пользователей пока нет${RESET}"
     fi
 }
 
-# 检查端口是否已被使用
+# Проверка, занят ли уже указанный порт
 check_port_usage() {
     local port=$1
-    # 检查是否被其他 snell 实例使用
+    # Проверка использования другими экземплярами snell
     if [ -d "${SNELL_CONF_DIR}/users" ]; then
         for conf in "${SNELL_CONF_DIR}/users"/*; do
             if [ -f "$conf" ]; then
@@ -1754,14 +1754,14 @@ check_port_usage() {
             fi
         done
     fi
-    # 检查主配置文件（遗留路径）
+    # Проверка основного файла конфигурации (устаревший путь)
     if [ -f "${SNELL_CONF_DIR}/snell-server.conf" ]; then
         local main_port=$(grep -E '^listen' "${SNELL_CONF_DIR}/snell-server.conf" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p')
         if [ "$main_port" == "$port" ]; then
             return 1
         fi
     fi
-    # 检查系统实际监听端口（ss 不存在时跳过）
+    # Проверка реально прослушиваемых портов в системе (пропускается, если нет утилиты ss)
     if command -v ss &> /dev/null; then
         if ss -tulnH 2>/dev/null | grep -q ":${port} "; then
             return 1
@@ -1770,33 +1770,33 @@ check_port_usage() {
     return 0
 }
 
-# 校验用户输入的端口：纯数字 + 范围 1-65535；显式拒绝 main（主配置）
+# Валидация введенного пользователем порта: только цифры + диапазон 1-65535; явный запрет на значение main (основная конфигурация)
 validate_user_port() {
     local port="$1"
     if [ "$port" = "main" ]; then
-        echo -e "${RED}不能直接操作主用户配置（snell-main.conf），请用主脚本管理主用户${RESET}"
+        echo -e "${RED}Нельзя напрямую редактировать конфигурацию основного пользователя (snell-main.conf). Пожалуйста, используйте главный скрипт для управления основным пользователем.${RESET}"
         return 1
     fi
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-        echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字${RESET}"
+        echo -e "${RED}Недопустимый номер порта, введите число от 1 до 65535${RESET}"
         return 1
     fi
     return 0
 }
 
-# 多用户数据并发锁：add/delete/modify 是典型的 check-then-act，
-# 加锁防止两个管理会话同时操作同一端口导致配置互相覆盖
+# Блокировка конкурентного доступа к многопользовательским данным: операции add/delete/modify работают по принципу check-then-act,
+# блокировка предотвращает взаимную перезапись конфигураций при одновременной работе двух сессий управления с одним и тем же портом
 multi_user_lock() {
     if ! command -v flock &> /dev/null; then
-        echo -e "${YELLOW}未找到 flock，跳过并发锁${RESET}"
+        echo -e "${YELLOW}Утилита flock не найдена, блокировка параллельного доступа пропущена${RESET}"
         return 0
     fi
     if ! exec 200>"${SNELL_CONF_DIR}/.multi-user.lock" 2>/dev/null; then
-        echo -e "${RED}无法创建锁文件，已取消操作${RESET}"
+        echo -e "${RED}Не удалось создать файл блокировки, операция отменена${RESET}"
         return 1
     fi
     if ! flock -n 200 2>/dev/null; then
-        echo -e "${RED}另有用户管理操作正在进行，请稍后再试${RESET}"
+        echo -e "${RED}В данный момент уже выполняется другая операция управления пользователями, повторите попытку позже${RESET}"
         exec 200>&- 2>/dev/null || true
         return 1
     fi
@@ -1809,24 +1809,24 @@ multi_user_unlock() {
 }
 
 
-# 通道在本机的安装状态，用于菜单提示
+# Статус установки канала на сервере (для подсказки в меню)
 snell_channel_label() {
     if [ -x "$(snell_binary_for_version "$1")" ]; then
-        echo "已安装"
+        echo "установлен"
     else
-        echo "未安装，选中后自动下载"
+        echo "не установлен, скачается автоматически при выборе"
     fi
 }
 
-# 为用户选择 Snell 通道，结果写入全局 SNELL_VERSION_CHOICE
+# Выбор канала версии Snell для пользователя (результат записывается в глобальную переменную SNELL_VERSION_CHOICE)
 select_user_snell_version() {
-    local prompt_title="${1:-选择该用户使用的 Snell 版本}"
+    local prompt_title="${1:-Выбор версии Snell для этого пользователя}"
     local installed default_version arch
     installed=$(list_installed_snell_versions)
     default_version=$(get_conf_snell_version "$SNELL_CONF_FILE")
     arch=$(uname -m)
 
-    # 主配置缺失或软链断了时 default_version 可能是 unknown，退到第一个已装通道
+    # При отсутствии основной конфигурации или поломке символьной ссылки default_version может быть unknown — берем первый установленный канал
     case "$default_version" in
         v4|v5|v6) ;;
         *) default_version="${installed%% *}" ;;
@@ -1834,21 +1834,21 @@ select_user_snell_version() {
     [ -n "$default_version" ] || default_version="v5"
 
     echo -e "\n${CYAN}=== ${prompt_title} ===${RESET}"
-    echo -e "${YELLOW}已安装通道: ${installed:-无}${RESET}"
-    echo -e "${YELLOW}不同端口可以跑不同版本，彼此独立互不影响${RESET}\n"
-    echo -e "${GREEN}1.${RESET} Snell v4        （$(snell_channel_label v4)）"
-    echo -e "${GREEN}2.${RESET} Snell v5        （$(snell_channel_label v5)）"
-    echo -e "${GREEN}3.${RESET} Snell v6        （$(snell_channel_label v6)）"
-    echo -e "${GREEN}0.${RESET} 跟随主用户（${default_version}）"
+    echo -e "${YELLOW}Установленные каналы: ${installed:-нет}${RESET}"
+    echo -e "${YELLOW}Разные порты могут работать на разных версиях независимо друг от друга${RESET}\n"
+    echo -e "${GREEN}1.${RESET} Snell v4        ($(snell_channel_label v4))"
+    echo -e "${GREEN}2.${RESET} Snell v5        ($(snell_channel_label v5))"
+    echo -e "${GREEN}3.${RESET} Snell v6        ($(snell_channel_label v6))"
+    echo -e "${GREEN}0.${RESET} Как у основного пользователя (${default_version})"
 
     while true; do
-        read -rp "请选择 [0-3]: " version_pick
+        read -rp "Выберите вариант [0-3]: " version_pick
         case "$version_pick" in
             1) SNELL_VERSION_CHOICE="v4"; break ;;
             2) SNELL_VERSION_CHOICE="v5"; break ;;
             3)
                 if [ "$arch" = "armv7l" ] || [ "$arch" = "armv7" ]; then
-                    echo -e "${RED}Snell v6 暂不提供 armv7l 构建，请选择其他版本${RESET}"
+                    echo -e "${RED}Для Snell v6 пока нет сборок под armv7l, выберите другую версию${RESET}"
                     continue
                 fi
                 SNELL_VERSION_CHOICE="v6"
@@ -1856,33 +1856,33 @@ select_user_snell_version() {
                 break
                 ;;
             0|"") SNELL_VERSION_CHOICE="$default_version"; break ;;
-            *) echo -e "${RED}请输入正确的选项 [0-3]${RESET}" ;;
+            *) echo -e "${RED}Пожалуйста, введите корректный вариант [0-3]${RESET}" ;;
         esac
     done
 
-    echo -e "${GREEN}已选择 Snell ${SNELL_VERSION_CHOICE}${RESET}"
+    echo -e "${GREEN}Выбран Snell ${SNELL_VERSION_CHOICE}${RESET}"
 }
 
-# 把某个用户的配置切换到目标通道：备好二进制 -> 迁移配置参数 -> 改 unit -> 重启，失败自动回滚
+# Переключение конфигурации пользователя на целевой канал: подготовка бинарника -> миграция параметров конфига -> обновление юнита -> перезапуск (с автооткатом при сбое)
 switch_user_conf_version() {
     local conf_file="$1"
     local target_version="$2"
     local port service unit current_version
 
     if [ ! -f "$conf_file" ]; then
-        echo -e "${RED}配置不存在: ${conf_file}${RESET}"
+        echo -e "${RED}Файл конфигурации не существует: ${conf_file}${RESET}"
         return 1
     fi
 
     current_version=$(get_conf_snell_version "$conf_file")
     if [ "$current_version" = "$target_version" ]; then
-        echo -e "${YELLOW}该用户已经在 ${target_version} 通道，无需切换${RESET}"
+        echo -e "${YELLOW}Этот пользователь уже использует канал ${target_version}, переключение не требуется${RESET}"
         return 0
     fi
 
     port=$(grep -E '^listen' "$conf_file" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p')
     if [ -z "$port" ]; then
-        echo -e "${RED}无法从 ${conf_file} 解析监听端口${RESET}"
+        echo -e "${RED}Не удалось извлечь порт прослушивания из ${conf_file}${RESET}"
         return 1
     fi
 
@@ -1893,7 +1893,7 @@ switch_user_conf_version() {
         unit="${SYSTEMD_DIR}/snell-${port}.service"
     fi
     if [ ! -f "$unit" ]; then
-        echo -e "${RED}未找到服务文件: ${unit}${RESET}"
+        echo -e "${RED}Файл службы не найден: ${unit}${RESET}"
         return 1
     fi
 
@@ -1905,8 +1905,8 @@ switch_user_conf_version() {
         return 1
     fi
 
-    # v6 的 mode / dns-ip-preference 按这个用户单独选；
-    # 先按本配置文件重置 IPV6_ENABLE，避免沿用之前 add_user 的残留值
+    # Параметры mode / dns-ip-preference для v6 выбираются индивидуально для этого пользователя;
+    # предварительно сбрасываем IPV6_ENABLE по текущему конфигу, чтобы не использовать остаточное значение от предыдущего вызова add_user
     if [ "$target_version" = "v6" ]; then
         IPV6_ENABLE="true"
         if grep -Eq '^[[:space:]]*ipv6[[:space:]]*=[[:space:]]*false' "$conf_file" \
@@ -1920,14 +1920,14 @@ switch_user_conf_version() {
     stamp=$(date +%Y%m%d_%H%M%S)
     backup_conf=$(snell_backup_path "$conf_file" "$stamp")
     if [ -z "$backup_conf" ] || ! cp -a "$conf_file" "$backup_conf"; then
-        echo -e "${RED}备份配置失败，已中止切换${RESET}"
+        echo -e "${RED}Ошибка резервного копирования конфигурации, переключение прервано${RESET}"
         SNELL_V6_OPTIONS_SET="false"
         return 1
     fi
     backup_unit=$(snell_backup_path "$unit" "$stamp")
     cp -a "$unit" "$backup_unit" 2>/dev/null || backup_unit=""
 
-    echo -e "${CYAN}正在把端口 ${port} 从 ${current_version} 切换到 ${target_version}...${RESET}"
+    echo -e "${CYAN}Переключение порта ${port} с ${current_version} на ${target_version}...${RESET}"
 
     migrate_snell_conf_for_version "$conf_file" "$target_version"
     if [ "$service" = "snell" ]; then
@@ -1939,17 +1939,17 @@ switch_user_conf_version() {
     systemctl daemon-reload 2>/dev/null || true
 
     if restart_and_verify_service "$service"; then
-        echo -e "${GREEN}✓ 端口 ${port} 已切换到 Snell ${target_version}${RESET}"
-        echo -e "${YELLOW}客户端请把该节点的 version 改为 ${target_version#v}${RESET}"
+        echo -e "${GREEN}✓ Порт ${port} переключен на Snell ${target_version}${RESET}"
+        echo -e "${YELLOW}Не забудьте изменить параметр version на ${target_version#v} для этого узла в клиентском приложении${RESET}"
         if [ "$target_version" = "v6" ]; then
-            echo -e "${YELLOW}并补上 mode = $(get_snell_mode "$conf_file")${RESET}"
+            echo -e "${YELLOW}а также добавить параметр mode = $(get_snell_mode "$conf_file")${RESET}"
         fi
-        echo -e "${YELLOW}回滚备份: ${backup_conf}${RESET}"
+        echo -e "${YELLOW}Резервная копия для отката: ${backup_conf}${RESET}"
         SNELL_V6_OPTIONS_SET="false"
         return 0
     fi
 
-    echo -e "${RED}切换后服务未能启动，正在回滚到 ${current_version}...${RESET}"
+    echo -e "${RED}Не удалось запустить службу после переключения, выполняется откат на ${current_version}...${RESET}"
     cat "$backup_conf" > "$conf_file"
     [ -n "$backup_unit" ] && cat "$backup_unit" > "$unit"
     systemctl daemon-reload 2>/dev/null || true
@@ -1957,58 +1957,58 @@ switch_user_conf_version() {
         update_snell_symlink "$current_version"
     fi
     if restart_and_verify_service "$service"; then
-        echo -e "${YELLOW}已回滚到 ${current_version}，服务恢复正常${RESET}"
+        echo -e "${YELLOW}Выполнен откат на ${current_version}, работа службы восстановлена${RESET}"
     else
-        echo -e "${RED}回滚后服务仍未启动，请手动检查: systemctl status ${service}${RESET}"
+        echo -e "${RED}После отката служба по-прежнему не запустилась, проверьте вручную: systemctl status ${service}${RESET}"
     fi
     SNELL_V6_OPTIONS_SET="false"
     return 1
 }
 
-# 添加新用户
+# Добавление нового пользователя
 add_user() {
-    # 并发锁（函数返回时自动释放）；重置 IPV6_ENABLE，避免沿用上次调用的残留值
+    # Блокировка конкурентного доступа (автоматически снимается при выходе из функции); сброс IPV6_ENABLE от предыдущих вызовов
     multi_user_lock || return 1
     trap 'multi_user_unlock' RETURN
     IPV6_ENABLE="true"
 
-    echo -e "\n${YELLOW}=== 添加新用户 ===${RESET}"
+    echo -e "\n${YELLOW}=== Добавление нового пользователя ===${RESET}"
     
-    # 创建用户配置目录
+    # Создание директории пользовательских конфигураций
     mkdir -p "${SNELL_CONF_DIR}/users"
     
-    # 获取端口号
+    # Запрос номера порта
     while true; do
-        read -rp "请输入新用户端口号 (1-65535): " PORT
+        read -rp "Введите номер порта для нового пользователя (1-65535): " PORT
         if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
-            # 检查端口是否已被使用
+            # Проверка, не занят ли порт
             if ! check_port_usage "$PORT"; then
-                echo -e "${RED}端口 $PORT 已被使用，请选择其他端口${RESET}"
+                echo -e "${RED}Порт $PORT уже используется, выберите другой порт${RESET}"
                 continue
             fi
             break
         else
-            echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字${RESET}"
+            echo -e "${RED}Недопустимый номер порта, введите число от 1 до 65535${RESET}"
         fi
     done
     
-    # 选择该用户使用的通道
+    # Выбор канала версии для этого пользователя
     select_user_snell_version
     local installed_version="$SNELL_VERSION_CHOICE"
 
-    # 通道缺失时先下载，失败就不要留下半成品用户
+    # Если нужный канал еще не установлен — скачиваем его; при неудаче отменяем создание пользователя
     if ! ensure_snell_binary "$installed_version"; then
-        echo -e "${RED}Snell ${installed_version} 未能就位，已取消添加用户${RESET}"
+        echo -e "${RED}Не удалось подготовить Snell ${installed_version}, добавление пользователя отменено${RESET}"
         return 1
     fi
 
-    # 生成随机 PSK
+    # Генерация случайного ключа PSK
     PSK=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 20)
     
-    # 获取 DNS 设置
+    # Запрос настроек DNS
     get_dns
     
-    # 创建用户配置文件（IPv6 设置跟随主配置）
+    # Создание файла конфигурации пользователя (настройка IPv6 наследуется из основной конфигурации)
     ensure_snell_service_user
     local ipv6_enable="true"
     local listen_addr="::0"
@@ -2019,7 +2019,7 @@ add_user() {
         listen_addr="0.0.0.0"
     fi
 
-    # v6 的 mode / dns-ip-preference 由本用户单独决定；默认沿用主配置里的取值
+    # Параметры mode / dns-ip-preference для v6 задаются индивидуально для этого пользователя (по умолчанию предлагаются значения из основной конфигурации)
     if [ "$installed_version" = "v6" ]; then
         IPV6_ENABLE="$ipv6_enable"
         SNELL_MODE=$(get_snell_mode "$main_conf")
@@ -2028,7 +2028,7 @@ add_user() {
     fi
 
     local user_conf="${SNELL_CONF_DIR}/users/snell-${PORT}.conf"
-    # v6 使用 mode / dns-ip-preference，ipv6 参数在 v6 已废弃
+    # В v6 используются mode / dns-ip-preference, параметр ipv6 в v6 устарел
     {
         echo "#${SNELL_VERSION_MARKER_KEY} = ${installed_version}"
         echo "[snell-server]"
@@ -2044,51 +2044,51 @@ add_user() {
     } > "$user_conf"
     SNELL_V6_OPTIONS_SET="false"
     
-    # 创建用户服务文件，ExecStart 指向该用户所选通道
+    # Создание файла службы пользователя с указанием выбранного канала в ExecStart
     local service_name="snell-${PORT}"
     write_user_service_unit "$PORT" "$user_conf" "$installed_version"
 
-    # 重载 systemd 配置
+    # Перезагрузка конфигурации systemd
     systemctl daemon-reload
     systemctl enable "$service_name" 2>/dev/null
 
-    # 启动并确认服务真的起来了，起不来就回收半成品，不留下坏用户
+    # Запуск и проверка работоспособности службы; при сбое удаляем созданные файлы, чтобы не оставлять нерабочего пользователя
     if ! restart_and_verify_service "$service_name"; then
-        echo -e "${RED}用户服务启动失败，正在回收本次创建的配置...${RESET}"
+        echo -e "${RED}Не удалось запустить пользовательскую службу, выполняется откат созданной конфигурации...${RESET}"
         systemctl disable "$service_name" 2>/dev/null
         rm -f "${SYSTEMD_DIR}/${service_name}.service"
         rm -f "$user_conf"
         systemctl daemon-reload
-        echo -e "${YELLOW}已回收。端口 ${PORT} 未被占用，可换个版本或端口重试。${RESET}"
+        echo -e "${YELLOW}Откат выполнен. Порт ${PORT} освобожден, попробуйте снова с другой версией или портом.${RESET}"
         return 1
     fi
 
-    # 开放端口
+    # Открытие порта в файрволе
     open_port "$PORT"
     
-    echo -e "\n${GREEN}用户添加成功！配置信息：${RESET}"
+    echo -e "\n${GREEN}Пользователь успешно добавлен! Информация о конфигурации:${RESET}"
     echo -e "${CYAN}--------------------------------${RESET}"
-    echo -e "${YELLOW}端口: ${PORT}${RESET}"
-    echo -e "${YELLOW}版本: Snell ${installed_version}${RESET}"
-    echo -e "${YELLOW}PSK: ${PSK}${RESET}"
-    [ "$installed_version" = "v6" ] && echo -e "${YELLOW}mode: ${SNELL_MODE}（客户端需一致）${RESET}"
-    echo -e "${YELLOW}配置文件: ${user_conf}${RESET}"
+    echo -e "${YELLOW}Порт:              ${PORT}${RESET}"
+    echo -e "${YELLOW}Версия:            Snell ${installed_version}${RESET}"
+    echo -e "${YELLOW}PSK:               ${PSK}${RESET}"
+    [ "$installed_version" = "v6" ] && echo -e "${YELLOW}mode:              ${SNELL_MODE} (на клиенте должен быть таким же)${RESET}"
+    echo -e "${YELLOW}Файл конфигурации: ${user_conf}${RESET}"
     echo -e "${CYAN}--------------------------------${RESET}"
 }
 
-# 删除用户
+# Удаление пользователя
 delete_user() {
-    # 并发锁（函数返回时自动释放）
+    # Блокировка конкурентного доступа (автоматически снимается при выходе из функции)
     multi_user_lock || return 1
     trap 'multi_user_unlock' RETURN
 
-    echo -e "\n${YELLOW}=== 删除用户 ===${RESET}"
+    echo -e "\n${YELLOW}=== Удаление пользователя ===${RESET}"
 
-    # 显示用户列表
+    # Отображение списка пользователей
     list_users
 
-    # 获取要删除的用户端口（纯数字校验，拒绝 main 主配置）
-    read -rp "请输入要删除的用户端口号: " del_port
+    # Запрос порта удаляемого пользователя (проверка на число, запрет редактирования main)
+    read -rp "Введите номер порта пользователя для удаления: " del_port
     if ! validate_user_port "$del_port"; then
         return 1
     fi
@@ -2097,45 +2097,45 @@ delete_user() {
     local service_name="snell-${del_port}"
 
     if [ -f "$user_conf" ]; then
-        # 停止并禁用服务
+        # Остановка и отключение службы
         systemctl stop "$service_name" 2>/dev/null || true
         systemctl disable "$service_name" 2>/dev/null || true
 
-        # 删除服务文件
+        # Удаление файлов службы
         rm -f "${SYSTEMD_DIR}/${service_name}.service"
         rm -f "/lib/systemd/system/${service_name}.service"
-        # 删除配置文件
+        # Удаление файла конфигурации
         rm -f "$user_conf"
 
-        # 防火墙里为它开的端口一起关掉
+        # Закрытие порта в файрволе
         close_port "$del_port"
 
-        # 清理该端口在 backup/ 下的旧备份（含明文 PSK）
+        # Очистка старых резервных копий этого порта в backup/ (содержат PSK открытым текстом)
         rm -f "${SNELL_CONF_DIR}/backup/snell-${del_port}.conf".* 2>/dev/null
         rm -f "${SNELL_CONF_DIR}/backup/snell-${del_port}.service".* 2>/dev/null
 
-        # 重载 systemd 配置
+        # Перезагрузка конфигурации systemd
         systemctl daemon-reload
 
-        echo -e "${GREEN}用户已成功删除${RESET}"
+        echo -e "${GREEN}Пользователь успешно удален${RESET}"
     else
-        echo -e "${RED}未找到端口为 ${del_port} 的用户${RESET}"
+        echo -e "${RED}Пользователь с портом ${del_port} не найден${RESET}"
     fi
 }
 
-# 修改用户配置
+# Изменение конфигурации пользователя
 modify_user() {
-    # 并发锁（函数返回时自动释放）
+    # Блокировка конкурентного доступа (автоматически снимается при выходе из функции)
     multi_user_lock || return 1
     trap 'multi_user_unlock' RETURN
 
-    echo -e "\n${YELLOW}=== 修改用户配置 ===${RESET}"
+    echo -e "\n${YELLOW}=== Изменение конфигурации пользователя ===${RESET}"
 
-    # 显示用户列表
+    # Отображение списка пользователей
     list_users
 
-    # 获取要修改的用户端口（纯数字校验，拒绝 main 主配置）
-    read -rp "请输入要修改的用户端口号: " mod_port
+    # Запрос порта изменяемого пользователя (проверка на число, запрет редактирования main)
+    read -rp "Введите номер порта пользователя для изменения: " mod_port
     if ! validate_user_port "$mod_port"; then
         return 1
     fi
@@ -2144,35 +2144,35 @@ modify_user() {
     local service_name="snell-${mod_port}"
     
     if [ -f "$user_conf" ]; then
-        echo -e "\n${YELLOW}当前版本: Snell $(get_conf_snell_version "$user_conf")${RESET}"
-        echo -e "${YELLOW}请选择要修改的项目：${RESET}"
-        echo -e "${GREEN}1.${RESET} 修改端口"
-        echo -e "${GREEN}2.${RESET} 重置 PSK"
-        echo -e "${GREEN}3.${RESET} 修改 DNS"
-        echo -e "${GREEN}4.${RESET} 修改 Snell 版本（切换通道）"
-        echo -e "${GREEN}0.${RESET} 返回"
+        echo -e "\n${YELLOW}Текущая версия: Snell $(get_conf_snell_version "$user_conf")${RESET}"
+        echo -e "${YELLOW}Выберите параметр для изменения:${RESET}"
+        echo -e "${GREEN}1.${RESET} Изменить порт"
+        echo -e "${GREEN}2.${RESET} Сбросить PSK"
+        echo -e "${GREEN}3.${RESET} Изменить DNS"
+        echo -e "${GREEN}4.${RESET} Изменить версию Snell (переключить канал)"
+        echo -e "${GREEN}0.${RESET} Назад"
         
-        read -rp "请输入选项 [0-4]: " mod_choice
+        read -rp "Выберите действие [0-4]: " mod_choice
         case "$mod_choice" in
             1)
-                # 修改端口
+                # Изменение порта
                 while true; do
-                    read -rp "请输入新端口号 (1-65535): " new_port
+                    read -rp "Введите новый номер порта (1-65535): " new_port
                     if [[ "$new_port" =~ ^[0-9]+$ ]] && [ "$new_port" -ge 1 ] && [ "$new_port" -le 65535 ]; then
                         if ! check_port_usage "$new_port"; then
-                            echo -e "${RED}端口 $new_port 已被使用，请选择其他端口${RESET}"
+                            echo -e "${RED}Порт $new_port уже используется, выберите другой порт${RESET}"
                             continue
                         fi
                         break
                     else
-                        echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字${RESET}"
+                        echo -e "${RED}Недопустимый номер порта, введите число от 1 до 65535${RESET}"
                     fi
                 done
                 
                 local mod_version
                 mod_version=$(get_conf_snell_version "$user_conf")
 
-                # 备份旧配置与旧服务文件，新端口启动失败时回滚
+                # Резервное копирование старой конфигурации и файла службы для отката при ошибке запуска на новом порту
                 local stamp backup_old_conf backup_old_unit new_conf
                 stamp=$(date +%Y%m%d_%H%M%S)
                 backup_old_conf=$(snell_backup_path "$user_conf" "$stamp")
@@ -2183,43 +2183,43 @@ modify_user() {
                         cp -a "${SYSTEMD_DIR}/${service_name}.service" "$backup_old_unit" 2>/dev/null || backup_old_unit=""
                     fi
                 else
-                    echo -e "${RED}备份旧配置失败，已中止改端口${RESET}"
+                    echo -e "${RED}Ошибка резервного копирования старой конфигурации, смена порта прервана${RESET}"
                     return 1
                 fi
 
-                # 停止并注销旧服务
+                # Остановка и отключение старой службы
                 systemctl stop "$service_name" 2>/dev/null || true
                 systemctl disable "$service_name" 2>/dev/null || true
 
-                # 修改配置文件中的端口：listen 里每个地址都改（v6 可以写多个地址），
-                # 按地址尾部匹配，mod_port=5 不会误改 :12345
+                # Изменение порта в файле конфигурации: меняем во всех адресах listen (в v6 может быть несколько адресов),
+                # сопоставляем по концу адреса, чтобы при mod_port=5 случайно не испортить :12345
                 local old_listen new_listen
                 old_listen=$(grep -E '^[[:space:]]*listen[[:space:]]*=' "$user_conf" | head -n 1 | sed 's/^[^=]*=[[:space:]]*//')
                 new_listen=$(listen_replace_port "$old_listen" "$mod_port" "$new_port")
                 sed -i "s|^[[:space:]]*listen[[:space:]]*=.*|listen = ${new_listen}|" "$user_conf"
                 if ! grep -Eq "^listen = .*:${new_port}$" "$user_conf"; then
-                    echo -e "${RED}配置文件端口替换失败，已中止${RESET}"
+                    echo -e "${RED}Ошибка замены порта в файле конфигурации, операция прервана${RESET}"
                     systemctl enable "$service_name" 2>/dev/null || true
                     restart_and_verify_service "$service_name" || true
                     return 1
                 fi
 
-                # 重命名配置文件，服务文件整份重写（Description 带版本号，逐行 sed 已不适用）
+                # Переименование файла конфигурации и полная перезапись файла службы (в Description указана версия, построчный sed больше не подходит)
                 new_conf="${SNELL_CONF_DIR}/users/snell-${new_port}.conf"
                 mv "$user_conf" "$new_conf"
                 rm -f "${SYSTEMD_DIR}/${service_name}.service"
                 write_user_service_unit "$new_port" "$new_conf" "$mod_version"
 
-                # 重载配置并启动服务
+                # Перезагрузка конфигурации systemd и запуск новой службы
                 systemctl daemon-reload
                 systemctl enable "snell-${new_port}" 2>/dev/null || true
                 if restart_and_verify_service "snell-${new_port}"; then
-                    # 成功：关闭旧端口防火墙规则，开放新端口
+                    # Успешно: закрываем старый порт в файрволе и открываем новый
                     close_port "$mod_port"
                     open_port "$new_port"
-                    echo -e "${GREEN}端口修改成功: ${mod_port} -> ${new_port}${RESET}"
+                    echo -e "${GREEN}Порт успешно изменен: ${mod_port} -> ${new_port}${RESET}"
                 else
-                    echo -e "${RED}新端口服务启动失败，正在回滚...${RESET}"
+                    echo -e "${RED}Не удалось запустить службу на новом порту, выполняется откат...${RESET}"
                     systemctl disable "snell-${new_port}" 2>/dev/null || true
                     rm -f "${SYSTEMD_DIR}/snell-${new_port}.service" "$new_conf"
                     cat "$backup_old_conf" > "$user_conf"
@@ -2227,54 +2227,54 @@ modify_user() {
                     systemctl daemon-reload 2>/dev/null || true
                     systemctl enable "$service_name" 2>/dev/null || true
                     if restart_and_verify_service "$service_name"; then
-                        echo -e "${YELLOW}已回滚到端口 ${mod_port}，服务恢复正常${RESET}"
+                        echo -e "${YELLOW}Выполнен откат на порт ${mod_port}, работа службы восстановлена${RESET}"
                     else
-                        echo -e "${RED}回滚后服务仍未启动，请手动检查: systemctl status ${service_name}${RESET}"
+                        echo -e "${RED}После отката служба по-прежнему не запустилась, проверьте вручную: systemctl status ${service_name}${RESET}"
                     fi
                 fi
                 ;;
             2)
-                # 重置 PSK
+                # Сброс PSK
                 local new_psk=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 20)
                 sed -i "s/psk = .*/psk = ${new_psk}/" "$user_conf"
                 systemctl restart "$service_name"
-                echo -e "${GREEN}PSK 已重置为: ${new_psk}${RESET}"
+                echo -e "${GREEN}Ключ PSK сброшен на: ${new_psk}${RESET}"
                 ;;
             3)
-                # 修改 DNS（get_dns 已做格式校验；sed 转义 & 与分隔符，防止注入/语法错误）
+                # Изменение DNS (get_dns уже проверяет формат; экранируем & и разделители для sed во избежание ошибок)
                 get_dns
                 local dns_escaped
                 dns_escaped=$(printf '%s' "$DNS" | sed 's/[&|\\]/\\&/g')
                 sed -i "s|^[[:space:]]*dns[[:space:]]*=[[:space:]]*.*|dns = ${dns_escaped}|" "$user_conf"
                 systemctl restart "$service_name"
-                echo -e "${GREEN}DNS 修改成功${RESET}"
+                echo -e "${GREEN}Настройки DNS успешно изменены${RESET}"
                 ;;
             4)
-                # 切换该用户使用的 Snell 通道
-                select_user_snell_version "把端口 ${mod_port} 切换到哪个版本"
+                # Переключение канала версии Snell для этого пользователя
+                select_user_snell_version "На какую версию переключить порт ${mod_port}"
                 switch_user_conf_version "$user_conf" "$SNELL_VERSION_CHOICE"
                 ;;
             0)
                 return
                 ;;
             *)
-                echo -e "${RED}无效选项${RESET}"
+                echo -e "${RED}Неверный выбор${RESET}"
                 ;;
         esac
     else
-        echo -e "${RED}未找到端口为 ${mod_port} 的用户${RESET}"
+        echo -e "${RED}Пользователь с портом ${mod_port} не найден${RESET}"
     fi
 }
 
-# 显示用户配置信息
+# Отображение подробной информации о конфигурации пользователя
 show_user_config() {
-    echo -e "\n${YELLOW}=== 用户配置信息 ===${RESET}"
+    echo -e "\n${YELLOW}=== Информация о конфигурации пользователя ===${RESET}"
     
-    # 显示用户列表
+    # Отображение списка пользователей
     list_users
     
-    # 获取要查看的用户端口（纯数字校验，拒绝 main 主配置）
-    read -rp "请输入要查看的用户端口号: " view_port
+    # Запрос порта просматриваемого пользователя (проверка на число, запрет на main)
+    read -rp "Введите номер порта пользователя для просмотра: " view_port
     if ! validate_user_port "$view_port"; then
         return 1
     fi
@@ -2287,71 +2287,71 @@ show_user_config() {
         local dns=$(grep -E '^[[:space:]]*dns[[:space:]]*=' "$user_conf" | awk -F'=' '{print $2}' | tr -d ' ')
         local mode=$(grep -E '^[[:space:]]*mode[[:space:]]*=' "$user_conf" | awk -F'=' '{print $2}' | tr -d ' ')
         local dns_pref=$(grep -E '^[[:space:]]*dns-ip-preference[[:space:]]*=' "$user_conf" | awk -F'=' '{print $2}' | tr -d ' ')
-        # 版本取自这个用户自己的配置，而不是全局探测
+        # Версия берется из индивидуальной конфигурации этого пользователя, а не из глобального определения
         local installed_version=$(get_conf_snell_version "$user_conf")
 
-        echo -e "\n${GREEN}用户配置详情：${RESET}"
+        echo -e "\n${GREEN}Подробности конфигурации пользователя:${RESET}"
         echo -e "${CYAN}--------------------------------${RESET}"
-        echo -e "${YELLOW}端口: ${port}${RESET}"
-        echo -e "${YELLOW}版本: Snell ${installed_version}${RESET}"
-        echo -e "${YELLOW}PSK: ${psk}${RESET}"
-        [ -n "$mode" ] && echo -e "${YELLOW}模式 (mode): ${mode}${RESET}"
-        [ -n "$dns_pref" ] && echo -e "${YELLOW}DNS 解析偏好: ${dns_pref}${RESET}"
-        echo -e "${YELLOW}DNS: ${dns}${RESET}"
+        echo -e "${YELLOW}Порт:                ${port}${RESET}"
+        echo -e "${YELLOW}Версия:              Snell ${installed_version}${RESET}"
+        echo -e "${YELLOW}PSK:                 ${psk}${RESET}"
+        [ -n "$mode" ] && echo -e "${YELLOW}Режим (mode):        ${mode}${RESET}"
+        [ -n "$dns_pref" ] && echo -e "${YELLOW}Предпочтение DNS:    ${dns_pref}${RESET}"
+        echo -e "${YELLOW}DNS:                 ${dns}${RESET}"
         
-        # 获取 IPv4 地址
+        # Получение адреса IPv4
         IPV4_ADDR=$(curl -s4 https://api.ipify.org)
         if [ $? -eq 0 ] && [ ! -z "$IPV4_ADDR" ]; then
             IP_COUNTRY_IPV4=$(get_ip_country "${IPV4_ADDR}")
-            echo -e "\n${GREEN}IPv4 配置：${RESET}"
+            echo -e "\n${GREEN}Конфигурация IPv4:${RESET}"
             print_surge_line "$IP_COUNTRY_IPV4" "$IPV4_ADDR" "$port" "$psk" "$installed_version"
         fi
         
-        # 获取 IPv6 地址
+        # Получение адреса IPv6
         IPV6_ADDR=$(curl -s6 https://api64.ipify.org)
         if [ $? -eq 0 ] && [ ! -z "$IPV6_ADDR" ]; then
             IP_COUNTRY_IPV6=$(get_ip_country "${IPV6_ADDR}")
-            echo -e "\n${GREEN}IPv6 配置：${RESET}"
+            echo -e "\n${GREEN}Конфигурация IPv6:${RESET}"
             print_surge_line "$IP_COUNTRY_IPV6" "$IPV6_ADDR" "$port" "$psk" "$installed_version"
         fi
         
         echo -e "${CYAN}--------------------------------${RESET}"
     else
-        echo -e "${RED}未找到端口为 ${view_port} 的用户${RESET}"
+        echo -e "${RED}Пользователь с портом ${view_port} не найден${RESET}"
     fi
 }
 
-# 主菜单
+# Главное меню
 show_menu() {
     clear
     echo -e "${CYAN}============================================${RESET}"
-    echo -e "${CYAN}          Snell 多用户管理${RESET}"
+    echo -e "${CYAN}     Многопользовательское управление Snell${RESET}"
     echo -e "${CYAN}============================================${RESET}"
-    echo -e "${GREEN}作者: jinqian${RESET}"
-    echo -e "${GREEN}网站：https://jinqians.com${RESET}"
+    echo -e "${GREEN}Автор: jinqian${RESET}"
+    echo -e "${GREEN}Сайт:  https://jinqians.com${RESET}"
     echo -e "${CYAN}============================================${RESET}"
     
-    echo -e "${YELLOW}=== 用户管理 ===${RESET}"
-    echo -e "${GREEN}1.${RESET} 查看所有用户"
-    echo -e "${GREEN}2.${RESET} 添加新用户"
-    echo -e "${GREEN}3.${RESET} 删除用户"
-    echo -e "${GREEN}4.${RESET} 修改用户配置"
-    echo -e "${GREEN}5.${RESET} 查看用户详细配置"
-    echo -e "${GREEN}0.${RESET} 退出脚本"
+    echo -e "${YELLOW}=== Управление пользователями ===${RESET}"
+    echo -e "${GREEN}1.${RESET} Показать всех пользователей"
+    echo -e "${GREEN}2.${RESET} Добавить нового пользователя"
+    echo -e "${GREEN}3.${RESET} Удалить пользователя"
+    echo -e "${GREEN}4.${RESET} Изменить конфигурацию пользователя"
+    echo -e "${GREEN}5.${RESET} Показать подробную конфигурацию пользователя"
+    echo -e "${GREEN}0.${RESET} Выйти из скрипта"
     
     echo -e "${CYAN}============================================${RESET}"
-    if ! read -rp "请输入选项 [0-5]: " choice; then
+    if ! read -rp "Выберите пункт меню [0-5]: " choice; then
         echo
-        echo -e "${YELLOW}未读取到输入，已退出多用户菜单。${RESET}"
+        echo -e "${YELLOW}Ввод не получен, выход из многопользовательского меню.${RESET}"
         exit 0
     fi
 }
 
-# 初始检查
+# Начальная проверка
 check_root
 check_snell_installed
 
-# 主循环
+# Главный цикл
 while true; do
     show_menu
     case "$choice" in
@@ -2371,13 +2371,13 @@ while true; do
             show_user_config
             ;;
         0)
-            echo -e "${GREEN}感谢使用，再见！${RESET}"
+            echo -e "${GREEN}Спасибо за использование, до свидания!${RESET}"
             exit 0
             ;;
         *)
-            echo -e "${RED}请输入正确的选项 [0-5]${RESET}"
+            echo -e "${RED}Пожалуйста, введите корректный пункт меню [0-5]${RESET}"
             ;;
     esac
-    echo -e "\n${CYAN}按任意键返回主菜单...${RESET}"
+    echo -e "\n${CYAN}Нажмите любую клавишу для возврата в главное меню...${RESET}"
     read -n 1 -s -r || exit 0
-done 
+done
