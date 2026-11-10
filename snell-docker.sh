@@ -1,17 +1,17 @@
 #!/bin/sh
-# 此文件由 tools/build.sh 从 src/snell-docker.sh 和 src/lib 生成：请修改 src/ 下的文件后重新生成。
+# Этот файл сгенерирован с помощью tools/build.sh из src/snell-docker.sh и src/lib: вносите изменения в файлы в каталоге src/ и генерируйте заново.
 # =========================================
-# 作者: jinqians (Docker版)
-# 创建日期: 2026年3月5日
-# 描述: 使用 Docker 在 Alpine | Debian | CentOS…… Linux 上安装和管理 Snell 代理
-#       避免宿主机兼容性问题，支持 Snell v4/v5/v6
+# Автор: jinqians (Docker-версия)
+# Дата создания: 5 марта 2026 г.
+# Описание: Установка и управление прокси Snell с помощью Docker на Alpine | Debian | CentOS... Linux
+#           Избегает проблем совместимости с хост-системой, поддерживает Snell v4/v5/v6
 # =========================================
 
-# --- 共用部分（src/lib，发布时由 tools/build.sh 合进来；都是 POSIX sh）---
-# 颜色、root 检查、Snell 官方版本与下载地址、公网地址与国家、防火墙
+# --- Общая часть (src/lib, объединяется через tools/build.sh при релизе; всё на POSIX sh) ---
+# Цвета, проверка root, официальные версии и ссылки на скачивание Snell, внешний IP и страна, файрвол
 # ── lib/common.sh ─────────────────────────────────────────────────────────────
-# 所有脚本共用：颜色、root 检查、系统与包管理器、脚本的发布地址。
-# 只用 POSIX sh 的写法：Alpine / Docker 版脚本在 ash、dash 下也要能用。
+# Общее для всех скриптов: цвета, проверка root, система и пакетный менеджер, адреса публикации скриптов.
+# Используется только синтаксис POSIX sh: версии скриптов для Alpine / Docker должны работать в ash и dash.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,33 +19,33 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# 脚本的发布地址。短域名（*.jinqians.com）由 Cloudflare 重定向到仓库里的文件：
-# snell / snell-centos / snell-alpine → 根目录，menu / snell-docker / install → scripts/。
-# 菜单里调用的子脚本从 SNELL_RAW_BASE 下的 scripts/、docker/ 取。
-# 脚本自身的更新与管理命令走短域名，运行才会被统计到。
-# 可以用同名环境变量换成镜像地址（测试时指向本地的文件）。
+# Адреса публикации скриптов. Короткие домены (*.jinqians.com) перенаправляются через Cloudflare на файлы в репозитории:
+# snell / snell-centos / snell-alpine → корневой каталог, menu / snell-docker / install → scripts/.
+# Дочерние скрипты, вызываемые из меню, берутся из scripts/ и docker/ по адресу SNELL_RAW_BASE.
+# Обновление самих скриптов и команды управления идут через короткие домены для учёта статистики запусков.
+# Можно заменить на адрес зеркала через одноимённые переменные окружения (при тестировании — указать на локальные файлы).
 SNELL_RAW_BASE="${SNELL_RAW_BASE:-https://raw.githubusercontent.com/jinqians/snell/main}"
-SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh（Debian / Ubuntu / CentOS / RHEL）
+SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh (Debian / Ubuntu / CentOS / RHEL)
 SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://snell-alpine.jinqians.com}" # snell-alpine.sh
 SNELL_DOCKER_SCRIPT_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}" # snell-docker.sh
 SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://menu.jinqians.com}"             # menu.sh
 
-# 检查是否以 root 权限运行
+# Проверка запуска с правами root
 check_root() {
     if [ "$(id -u)" != "0" ]; then
-        printf '%b\n' "${RED}请以 root 权限运行此脚本${RESET}"
+        printf '%b\n' "${RED}Пожалуйста, запустите этот скрипт с правами root${RESET}"
         exit 1
     fi
 }
 
-# 识别系统：OS_FAMILY = debian | rhel | alpine | unknown，PKG = apt | dnf | yum | apk
+# Определение ОС: OS_FAMILY = debian | rhel | alpine | unknown, PKG = apt | dnf | yum | apk
 OS_FAMILY=""
 PKG=""
 detect_os() {
     [ -n "$OS_FAMILY" ] && return 0
     OS_FAMILY="unknown"
     if [ -f /etc/os-release ]; then
-        # 在子 shell 里读，os-release 的 NAME / VERSION 等变量不会覆盖脚本自己的
+        # Чтение в подоболочке (subshell), чтобы переменные NAME / VERSION из os-release не перезаписали переменные скрипта
         case " $(. /etc/os-release; echo "$ID $ID_LIKE" | tr '[:upper:]' '[:lower:]') " in
             *" debian "*|*" ubuntu "*) OS_FAMILY="debian" ;;
             *" rhel "*|*" centos "*|*" fedora "*|*" rocky "*|*" almalinux "*) OS_FAMILY="rhel" ;;
@@ -61,16 +61,16 @@ detect_os() {
     fi
 }
 
-# 等待其他 apt 进程完成
+# Ожидание завершения других процессов apt
 wait_for_apt() {
     command -v fuser >/dev/null 2>&1 || return 0
     while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
-        printf '%b\n' "${YELLOW}等待其他 apt 进程完成...${RESET}"
+        printf '%b\n' "${YELLOW}Ожидание завершения других процессов apt...${RESET}"
         sleep 2
     done
 }
 
-# 用系统的包管理器安装软件包
+# Установка пакетов с помощью системного пакетного менеджера
 pkg_install() {
     detect_os
     case "$PKG" in
@@ -83,13 +83,13 @@ pkg_install() {
         yum) yum install -y "$@" ;;
         apk) apk add --no-cache "$@" ;;
         *)
-            printf '%b\n' "${RED}未识别的包管理器，请手动安装：$*${RESET}"
+            printf '%b\n' "${RED}Неизвестный пакетный менеджер, пожалуйста, установите вручную: $*${RESET}"
             return 1
             ;;
     esac
 }
 
-# 提供某个命令的软件包名（各发行版不同的在这里对上）
+# Сопоставление команды с именем пакета (различия между дистрибутивами указываются здесь)
 pkg_for_cmd() {
     detect_os
     case "$1" in
@@ -103,45 +103,45 @@ pkg_for_cmd() {
     esac
 }
 
-# 缺哪个命令就装哪个包；装不上返回非 0，由调用方决定是否退出
+# Установка недостающих пакетов для команд; при неудаче возвращает ненулевой код, решение о выходе принимает вызывающая сторона
 ensure_cmds() {
     _ec_missing=""
     for _ec_cmd in "$@"; do
         command -v "$_ec_cmd" >/dev/null 2>&1 || _ec_missing="${_ec_missing} $(pkg_for_cmd "$_ec_cmd")"
     done
     [ -z "$_ec_missing" ] && return 0
-    printf '%b\n' "${YELLOW}正在安装依赖：${_ec_missing# }${RESET}"
-    # shellcheck disable=SC2086 # 包名按空格分开传
+    printf '%b\n' "${YELLOW}Установка зависимостей: ${_ec_missing# }${RESET}"
+    # shellcheck disable=SC2086 # Имена пакетов передаются через пробел
     pkg_install $_ec_missing || return 1
     for _ec_cmd in "$@"; do
         if ! command -v "$_ec_cmd" >/dev/null 2>&1; then
-            printf '%b\n' "${RED}安装后仍找不到 ${_ec_cmd}，请手动安装 $(pkg_for_cmd "$_ec_cmd")${RESET}"
+            printf '%b\n' "${RED}После установки команда ${_ec_cmd} всё ещё не найдена, установите $(pkg_for_cmd "$_ec_cmd") вручную${RESET}"
             return 1
         fi
     done
 }
 
-# 下载远程脚本并做完整性校验：传输失败即停、非空、语法检查。
-# 只能保证传输完整；仓库本身被篡改要靠发布签名来防。
+# Скачивание удалённого скрипта и проверка целостности: остановка при сбое передачи, проверка на непустой файл и проверка синтаксиса.
+# Гарантирует только целостность передачи; от компрометации самого репозитория защищает только подпись релиза.
 fetch_verified_script() {   # <url> <dest>
     if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 "$1" -o "$2"; then
-        printf '%b\n' "${RED}下载失败: $1${RESET}" >&2
+        printf '%b\n' "${RED}Ошибка скачивания: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
     if [ ! -s "$2" ]; then
-        printf '%b\n' "${RED}下载的文件为空，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный файл пуст и был отброшен: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
-    # bash 能解析 sh 写法；没有 bash 的系统（Alpine）用 sh 检查
+    # bash может парсить синтаксис sh; в системах без bash (Alpine) для проверки используется sh
     if command -v bash >/dev/null 2>&1; then
         _fv_shell=bash
     else
         _fv_shell=sh
     fi
     if ! "$_fv_shell" -n "$2" 2>/dev/null; then
-        printf '%b\n' "${RED}下载的脚本未通过语法检查，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный скрипт не прошёл проверку синтаксиса и был отброшен: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
@@ -149,19 +149,19 @@ fetch_verified_script() {   # <url> <dest>
 }
 
 # ── lib/release.sh ────────────────────────────────────────────────────────────
-# Snell 官方版本：从发布页取各大版本的最新版本号，生成下载地址。POSIX sh。
+# Официальные версии Snell: получение последних номеров основных версий со страницы релизов и генерация ссылок для скачивания. POSIX sh.
 
-# 抓取失败、或发布页上没有这个大版本的下载地址时的兜底版本号。
-# v6.0.0 正式版发布后，发布页去掉了 v5 的下载地址（只留更新说明），v5 从此只能靠这里的 v5.0.1
+# Резервные номера версий на случай сбоя парсинга или отсутствия ссылки на основную версию на странице релизов.
+# После выхода релизной версии v6.0.0 со страницы убрали ссылки на скачивание v5 (оставив только описание изменений), поэтому v5 теперь опирается только на указанную здесь v5.0.1
 SNELL_V4_FALLBACK="v4.1.1"
 SNELL_V5_FALLBACK="v5.0.1"
 SNELL_V6_FALLBACK="v6.0.0"
 
-# Snell 官方发布页（旧的 manual.nssurge.com/others/snell.html 已下线）
+# Официальная страница релизов Snell (старая manual.nssurge.com/others/snell.html отключена)
 SNELL_RELEASE_NOTES_URL="https://kb.nssurge.com/surge-knowledge-base/release-notes/snell"
 SNELL_RELEASE_NOTES_URL_ZH="https://kb.nssurge.com/surge-knowledge-base/zh/release-notes/snell"
 
-# 抓取官方发布页内容
+# Получение содержимого официальной страницы релизов
 fetch_snell_release_notes() {
     local notes
     notes=$(curl -sL --max-time 15 "$SNELL_RELEASE_NOTES_URL")
@@ -171,8 +171,8 @@ fetch_snell_release_notes() {
     echo "$notes"
 }
 
-# 把版本号转成定长可排序键，排序优先级：beta < rc < 正式版
-# 6.0.0b4 -> 006.000.000.1.0004；6.0.0rc -> 006.000.000.2.0000；6.0.0rc2 -> 006.000.000.2.0002；6.0.0 -> 006.000.000.3.0000
+# Преобразование номера версии в ключ фиксированной длины для сортировки; приоритет: beta < rc < релиз
+# 6.0.0b4 -> 006.000.000.1.0004; 6.0.0rc -> 006.000.000.2.0000; 6.0.0rc2 -> 006.000.000.2.0002; 6.0.0 -> 006.000.000.3.0000
 snell_version_sort_key() {
     echo "${1#[vV]}" | awk '{
         ver = $0
@@ -194,7 +194,7 @@ snell_version_sort_key() {
     }'
 }
 
-# 从发布页中挑出指定大版本的最新版本（页面上的先后顺序不代表新旧，必须排序）
+# Выбор последней версии указанной основной ветки со страницы релизов (порядок на странице не гарантирует новизну, необходима сортировка)
 pick_latest_snell_version() {
     local major="$1"
     local notes="$2"
@@ -211,7 +211,7 @@ pick_latest_snell_version() {
         | awk '{print $2}'
 }
 
-# 获取 Snell v4 最新版本
+# Получение последней версии Snell v4
 get_latest_snell_v4_version() {
     local ver
     ver=$(pick_latest_snell_version 4 "$(fetch_snell_release_notes)")
@@ -222,7 +222,7 @@ get_latest_snell_v4_version() {
     fi
 }
 
-# 获取 Snell v5 最新版本
+# Получение последней версии Snell v5
 get_latest_snell_v5_version() {
     local ver
     ver=$(pick_latest_snell_version 5 "$(fetch_snell_release_notes)")
@@ -233,7 +233,7 @@ get_latest_snell_v5_version() {
     fi
 }
 
-# 获取 Snell v6 最新版本
+# Получение последней версии Snell v6
 get_latest_snell_v6_version() {
     local ver
     ver=$(pick_latest_snell_version 6 "$(fetch_snell_release_notes)")
@@ -244,7 +244,7 @@ get_latest_snell_v6_version() {
     fi
 }
 
-# 解析指定通道的最新版本号（失败时回落到内置常量）
+# Определение последнего номера версии для указанной ветки (при неудаче используется встроенная константа)
 resolve_latest_version_for_channel() {
     case "$1" in
         v6) get_latest_snell_v6_version ;;
@@ -254,7 +254,7 @@ resolve_latest_version_for_channel() {
     esac
 }
 
-# 生成指定通道 + 版本号的下载地址；不支持的架构返回非 0（不 exit，调用方可继续）
+# Генерация ссылки на скачивание для указанной ветки и версии; для неподдерживаемых архитектур возвращает ненулевой код (без exit, чтобы вызывающая сторона могла продолжить работу)
 snell_download_url_for() {
     local version_choice="$1"
     local resolved_version="$2"
@@ -264,13 +264,13 @@ snell_download_url_for() {
     case "$version_choice" in
         v4|v5|v6) ;;
         *)
-            printf '%b\n' "${RED}不支持的 Snell 通道: ${version_choice}${RESET}" >&2
+            printf '%b\n' "${RED}Неподдерживаемая ветка Snell: ${version_choice}${RESET}" >&2
             return 1
             ;;
     esac
 
     if [ "$version_choice" = "v6" ] && { [ "$arch" = "armv7l" ] || [ "$arch" = "armv7" ]; }; then
-        printf '%b\n' "${RED}Snell v6 暂不提供 armv7l 构建${RESET}" >&2
+        printf '%b\n' "${RED}Для Snell v6 пока не предоставляются сборки под armv7l${RESET}" >&2
         return 1
     fi
 
@@ -280,20 +280,20 @@ snell_download_url_for() {
         "aarch64"|"arm64") echo "https://dl.nssurge.com/snell/snell-server-${resolved_version}-linux-aarch64.zip" ;;
         "armv7l"|"armv7")  echo "https://dl.nssurge.com/snell/snell-server-${resolved_version}-linux-armv7l.zip" ;;
         *)
-            printf '%b\n' "${RED}不支持的架构: ${arch}${RESET}" >&2
+            printf '%b\n' "${RED}Неподдерживаемая архитектура: ${arch}${RESET}" >&2
             return 1
             ;;
     esac
 }
 
 # ── lib/netinfo.sh ────────────────────────────────────────────────────────────
-# 本机公网地址与所在国家（生成客户端配置时用）。POSIX sh。
+# Публичный IP-адрес хоста и страна расположения (используется при генерации конфигурации клиента). POSIX sh.
 
-# 本机公网 IPv4 / IPv6（取不到时为空）
+# Публичный IPv4 / IPv6 хоста (пусто, если получить не удалось)
 get_public_ipv4() { curl -s4 --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null; }
 get_public_ipv6() { curl -s6 --connect-timeout 5 --max-time 10 https://api64.ipify.org 2>/dev/null; }
 
-# 查询 IP 所属国家代码（多接口回退，避免单一接口限流返回错误信息）
+# Запрос кода страны для IP (резервирование через несколько API, чтобы избежать возврата ошибки при лимите запросов на одном из них)
 get_ip_country() {
     local target="$1"
     local api=""
@@ -328,21 +328,21 @@ get_ip_country() {
 }
 
 # ── lib/firewall.sh ───────────────────────────────────────────────────────────
-# 开放 / 关闭端口：firewalld、ufw、iptables + ip6tables、nftables，系统在用哪个就配哪个，
-# 并持久化。所有脚本共用这一份（以前各脚本各有一份，CentOS 版才认 firewalld、
-# Docker 版只开 TCP、重复安装会叠加重复规则）。POSIX sh。
+# Открытие / закрытие портов: firewalld, ufw, iptables + ip6tables, nftables — настраивается и сохраняется то, что используется в системе.
+# Этот модуль общий для всех скриптов (раньше в каждом скрипте была своя копия: только версия для CentOS распознавала firewalld,
+# Docker-версия открывала только TCP, а повторная установка дублировала правила). POSIX sh.
 
-# firewalld 正在运行
+# firewalld запущен
 _fw_firewalld_active() {
     command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1
 }
 
-# ufw 已启用（-w：不把 inactive 当成 active）
+# ufw включён (-w: чтобы не принять inactive за active)
 _fw_ufw_active() {
     command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"
 }
 
-# both | tcp | udp → 协议列表
+# both | tcp | udp → список протоколов
 _fw_protos() {
     case "$1" in
         tcp) echo "tcp" ;;
@@ -351,7 +351,7 @@ _fw_protos() {
     esac
 }
 
-# iptables 规则持久化：Debian 的 /etc/iptables、RHEL 的 iptables-services、Alpine 的 init 脚本
+# Сохранение правил iptables: /etc/iptables в Debian, iptables-services в RHEL, init-скрипт в Alpine
 _fw_iptables_save() {
     if [ -x /etc/init.d/iptables ] && command -v rc-update >/dev/null 2>&1; then
         /etc/init.d/iptables save >/dev/null 2>&1 || true
@@ -370,12 +370,12 @@ _fw_iptables_save() {
     fi
 }
 
-# iptables / ip6tables：没有同样的规则才插入
+# iptables / ip6tables: вставка правила только при отсутствии аналогичного
 _fw_iptables_open() {   # <port> <protos>
     _fio_changed=false
     for _fio_t in iptables ip6tables; do
         command -v "$_fio_t" >/dev/null 2>&1 || continue
-        "$_fio_t" -L INPUT -n >/dev/null 2>&1 || continue   # 内核或容器里不可用
+        "$_fio_t" -L INPUT -n >/dev/null 2>&1 || continue   # Недоступно в ядре или контейнере
         for _fio_p in $2; do
             if ! "$_fio_t" -C INPUT -p "$_fio_p" --dport "$1" -j ACCEPT 2>/dev/null; then
                 "$_fio_t" -I INPUT -p "$_fio_p" --dport "$1" -j ACCEPT 2>/dev/null && _fio_changed=true
@@ -383,7 +383,7 @@ _fw_iptables_open() {   # <port> <protos>
         done
     done
     if [ "$_fio_changed" = true ]; then
-        printf '%b\n' "${CYAN}在 iptables 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в iptables${RESET}"
         _fw_iptables_save
     fi
 }
@@ -403,7 +403,7 @@ _fw_iptables_close() {   # <port>
     return 0
 }
 
-# 保存 nftables 规则（有持久化配置文件时）
+# Сохранение правил nftables (при наличии конфигурационного файла для постоянного хранения)
 save_nftables_rules() {
     command -v nft >/dev/null 2>&1 || return 0
     for _snr_f in /etc/nftables.conf /etc/sysconfig/nftables.conf /etc/nftables.nft; do
@@ -414,14 +414,14 @@ save_nftables_rules() {
         elif command -v rc-update >/dev/null 2>&1; then
             rc-update add nftables boot >/dev/null 2>&1 || true
         fi
-        printf '%b\n' "${GREEN}nftables 规则已保存${RESET}"
+        printf '%b\n' "${GREEN}Правила nftables сохранены${RESET}"
         return 0
     done
     return 0
 }
 
-# nftables 里 hook 在 input 上的 filter 链（"族 表 链" 每行一条）。
-# iptables-nft 自己的 ip/ip6 filter 表已由 iptables 处理，跳过，免得规则重复。
+# Цепочки фильтрации в nftables с хуком на input (по одной записи "семейство таблица цепочка" на строку).
+# Таблицы filter для ip/ip6 от iptables-nft уже обрабатываются через iptables, пропускаем их во избежание дублирования правил.
 _fw_nft_input_chains() {
     nft -a list ruleset 2>/dev/null | awk -v skip_ipt="$1" '
         $1 == "table" { family = $2; table = $3; gsub(/[{}]/, "", table) }
@@ -433,7 +433,7 @@ _fw_nft_input_chains() {
     '
 }
 
-# 在 nftables 现有的 input 链里放行端口（没有 nftables 防火墙时什么都不做）
+# Разрешение порта в существующих цепочках input в nftables (ничего не делает при отсутствии файрвола nftables)
 open_nftables_port() {   # <port> [both|tcp|udp]
     command -v nft >/dev/null 2>&1 || return 0
     _onp_skip=0
@@ -453,12 +453,12 @@ open_nftables_port() {   # <port> [both|tcp|udp]
 $_onp_chains
 EOF
     if [ "$_onp_changed" = true ]; then
-        printf '%b\n' "${CYAN}在 nftables 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в nftables${RESET}"
         save_nftables_rules
     fi
 }
 
-# 删掉 nftables 里放行该端口的规则
+# Удаление правил, разрешающих данный порт в nftables
 close_nftables_port() {   # <port>
     command -v nft >/dev/null 2>&1 || return 0
     _cnp_rules=$(nft -a list ruleset 2>/dev/null | awk -v port="$1" '
@@ -476,20 +476,20 @@ EOF
     save_nftables_rules
 }
 
-# 开放端口：firewalld 在运行就只交给它；ufw 已启用就只交给它；否则配 iptables 与 nftables
+# Открытие порта: если запущен firewalld — используем только его; если включён ufw — только его; иначе настраиваем iptables и nftables
 open_port() {   # <port> [both|tcp|udp]
     _op_protos=$(_fw_protos "${2:-both}")
     if _fw_firewalld_active; then
-        printf '%b\n' "${CYAN}在 firewalld 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в firewalld${RESET}"
         for _op_p in $_op_protos; do
             firewall-cmd --permanent --add-port="$1/${_op_p}" >/dev/null 2>&1 || true
             firewall-cmd --add-port="$1/${_op_p}" >/dev/null 2>&1 || true
         done
         return 0
     fi
-    # ufw 装了但没启用时也写进去：以后启用 ufw 时端口仍是开的
+    # Если ufw установлен, но не включён, всё равно добавляем правило: при последующем включении ufw порт останется открытым
     if command -v ufw >/dev/null 2>&1; then
-        printf '%b\n' "${CYAN}在 UFW 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в UFW${RESET}"
         for _op_p in $_op_protos; do
             ufw allow "$1/${_op_p}" >/dev/null 2>&1 || true
         done
@@ -500,7 +500,7 @@ open_port() {   # <port> [both|tcp|udp]
     return 0
 }
 
-# 关闭端口：各个防火墙里放行它的规则都删掉
+# Закрытие порта: удаление разрешающих правил для этого порта во всех файрволах
 close_port() {   # <port>
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         for _cp_p in tcp udp; do
@@ -518,7 +518,7 @@ close_port() {   # <port>
     return 0
 }
 
-# 端口在当前防火墙里是否放行（测试与状态显示用）：firewalld / ufw / iptables / nftables 任一处放行即算
+# Проверка, разрешён ли порт в текущем файрволе (для тестирования и отображения статуса): достаточно разрешения в любом из firewalld / ufw / iptables / nftables
 port_allowed() {   # <port> <tcp|udp>
     if _fw_firewalld_active; then
         firewall-cmd --query-port="$1/$2" >/dev/null 2>&1
@@ -534,7 +534,7 @@ port_allowed() {   # <port> <tcp|udp>
     command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q "$2 dport $1 .*accept"
 }
 
-# 端口是否有进程在监听（TCP 或 UDP）
+# Проверка, прослушивается ли порт каким-либо процессом (TCP или UDP)
 is_port_in_use() {   # <port>
     if command -v ss >/dev/null 2>&1; then
         ss -H -ltn "( sport = :$1 )" 2>/dev/null | grep -q . && return 0
@@ -549,7 +549,7 @@ is_port_in_use() {   # <port>
     return 1
 }
 
-# 显示占用指定端口的进程
+# Отображение процесса, занимающего указанный порт
 show_port_occupier() {   # <port>
     if command -v ss >/dev/null 2>&1; then
         ss -ltnp "( sport = :$1 )" 2>/dev/null | sed 's/^/  /'
@@ -564,27 +564,27 @@ show_port_occupier() {   # <port>
 
 BLUE='\033[0;34m'
 
-# --- 脚本版本号 ---
+# --- Версия скрипта ---
 current_version="1.7"
 
-# Snell v6 加密模式：default / unshaped / unsafe-raw（客户端必须与服务端一致）
+# Режим шифрования Snell v6: default / unshaped / unsafe-raw (на клиенте должен совпадать с сервером)
 SNELL_MODE="default"
 
 
-# --- 全局变量 ---
+# --- Глобальные переменные ---
 SNELL_VERSION_CHOICE=""
 SNELL_VERSION=""
 CONTAINER_NAME="snell-server"
 IMAGE_NAME="my-snell"
-# 脚本所在目录（在 cd 到临时工作目录之前解析，供 create_dockerfile 查找 entrypoint.sh）
+# Каталог, в котором находится скрипт (определяется до перехода во временный рабочий каталог, чтобы create_dockerfile мог найти entrypoint.sh)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# --- 基础函数 ---
+# --- Базовые функции ---
 
-# Alpine 最小安装默认没有 curl，缺失时查公网 IP、拉取版本号都会静默失败
+# В минимальной установке Alpine по умолчанию нет curl; при его отсутствии запросы внешнего IP и версий будут молча завершаться ошибкой
 ensure_curl() {
     command -v curl >/dev/null 2>&1 && return 0
-    echo -e "${YELLOW}未检测到 curl，正在安装...${RESET}"
+    echo -e "${YELLOW}curl не обнаружен, выполняется установка...${RESET}"
     if command -v apk >/dev/null 2>&1; then
         apk add --no-cache curl >/dev/null 2>&1
     elif command -v apt-get >/dev/null 2>&1; then
@@ -595,12 +595,12 @@ ensure_curl() {
         yum install -y curl >/dev/null 2>&1
     fi
     if ! command -v curl >/dev/null 2>&1; then
-        echo -e "${RED}curl 安装失败，请手动安装后重试。${RESET}"
+        echo -e "${RED}Не удалось установить curl, установите его вручную и повторите попытку.${RESET}"
         exit 1
     fi
 }
 
-# 按容器名精确匹配；直接 grep docker ps 的输出会误中镜像名 jinqians/snell-server
+# Точное совпадение по имени контейнера; прямой grep по выводу docker ps может ошибочно среагировать на имя образа jinqians/snell-server
 container_exists() {
     docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"
 }
@@ -609,15 +609,15 @@ container_running() {
     docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"
 }
 
-# Docker 开机自启
-# Alpine 的 /etc/init.d/docker 声明了 need net，而 net 由 networking 提供，
-# 云镜像里 networking 在 default 运行级别。docker 若放在 boot 运行级别，
-# 开机时依赖不满足、不会被拉起，重启后所有容器都连不上，所以必须放在 default。
+# Автозапуск Docker при загрузке системы
+# В Alpine скрипт /etc/init.d/docker объявляет зависимость need net, которая предоставляется службой networking,
+# а в облачных образах networking находится на уровне запуска (runlevel) default. Если поместить docker на уровень boot,
+# при загрузке зависимость не будет выполнена, служба не запустится, и после перезагрузки все контейнеры будут недоступны; поэтому его нужно добавлять в default.
 enable_docker_on_boot() {
     if [ -f /etc/alpine-release ]; then
         if rc-update show boot 2>/dev/null | grep -qw docker; then
             rc-update del docker boot >/dev/null 2>&1
-            echo -e "${YELLOW}已将 docker 从 boot 运行级别移到 default（否则重启后不会自动启动）${RESET}"
+            echo -e "${YELLOW}Служба docker перемещена с уровня запуска boot на default (иначе она не будет автоматически запускаться после перезагрузки)${RESET}"
         fi
         rc-update add docker default >/dev/null 2>&1
     else
@@ -627,82 +627,82 @@ enable_docker_on_boot() {
 
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
-        echo -e "${YELLOW}未检测到 Docker，是否自动安装？${RESET}"
-        printf "输入 y 安装，其他键退出: "
+        echo -e "${YELLOW}Docker не обнаружен. Установить автоматически?${RESET}"
+        printf "Введите y для установки, любую другую клавишу для выхода: "
         read -r install_docker
         if [ "$install_docker" != "y" ] && [ "$install_docker" != "Y" ]; then
-            echo -e "${RED}取消安装。${RESET}"
+            echo -e "${RED}Установка отменена.${RESET}"
             exit 1
         fi
         
-        echo -e "${CYAN}正在安装 Docker...${RESET}"
+        echo -e "${CYAN}Установка Docker...${RESET}"
         if [ -f /etc/alpine-release ]; then
             apk add --no-cache docker docker-cli-compose
         else
-            echo -e "${YELLOW}将从 https://get.docker.com 下载 Docker 官方安装脚本并直接管道执行。${RESET}"
-            echo -e "${YELLOW}注意：管道执行远程脚本存在供应链风险，请确认你信任该来源。${RESET}"
-            printf "确认继续安装 Docker？[y/N]: "
+            echo -e "${YELLOW}Сейчас будет скачан официальный скрипт установки Docker с https://get.docker.com и выполнен напрямую через конвейер (pipe).${RESET}"
+            echo -e "${YELLOW}Внимание: выполнение удалённых скриптов через pipe несёт риски для цепочки поставок. Убедитесь, что вы доверяете этому источнику.${RESET}"
+            printf "Подтверждаете продолжение установки Docker? [y/N]: "
             read -r confirm_pipe_install
             if [ "$confirm_pipe_install" != "y" ] && [ "$confirm_pipe_install" != "Y" ]; then
-                echo -e "${RED}已取消 Docker 安装。${RESET}"
+                echo -e "${RED}Установка Docker отменена.${RESET}"
                 exit 1
             fi
             curl -fsSL https://get.docker.com | sh
         fi
 
         if ! command -v docker >/dev/null 2>&1; then
-            echo -e "${RED}Docker 安装失败，请手动安装。${RESET}"
+            echo -e "${RED}Не удалось установить Docker, пожалуйста, установите его вручную.${RESET}"
             exit 1
         fi
-        echo -e "${GREEN}✓ Docker 安装成功${RESET}"
+        echo -e "${GREEN}✓ Docker успешно установлен${RESET}"
     fi
 
-    # 每次都校正开机自启，已装过的机器重跑脚本也能修好
+    # Проверяем и корректируем автозапуск при каждом вызове, чтобы исправить настройку даже на тех машинах, где Docker уже был установлен ранее
     enable_docker_on_boot
 
     if ! docker info >/dev/null 2>&1; then
-        echo -e "${YELLOW}Docker 服务未运行，正在尝试启动...${RESET}"
+        echo -e "${YELLOW}Служба Docker не запущена, попытка запуска...${RESET}"
         if [ -f /etc/alpine-release ]; then
             rc-service docker start
         else
             systemctl start docker
         fi
-        # dockerd 刚拉起时 socket 还没就绪，最多等 30 秒
+        # Сразу после запуска dockerd сокет ещё не готов, ждём максимум 30 секунд
         local i=0
         while ! docker info >/dev/null 2>&1 && [ "$i" -lt 30 ]; do
             sleep 1
             i=$((i + 1))
         done
         if ! docker info >/dev/null 2>&1; then
-            echo -e "${RED}Docker 服务启动失败，请手动启动。${RESET}"
+            echo -e "${RED}Не удалось запустить службу Docker, запустите её вручную.${RESET}"
             exit 1
         fi
     fi
     
-    echo -e "${GREEN}✓ Docker 环境检查通过${RESET}"
+    echo -e "${GREEN}✓ Проверка окружения Docker пройдена${RESET}"
 }
 
-# --- 版本选择与获取 ---
+# --- Выбор и получение версии ---
 
 select_snell_version() {
-    echo -e "${CYAN}请选择要安装的 Snell 版本：${RESET}"
+    echo -e "${CYAN}Выберите версию Snell для установки:${RESET}"
     echo -e "${GREEN}1.${RESET} Snell v4"
     echo -e "${GREEN}2.${RESET} Snell v5"
     echo -e "${GREEN}3.${RESET} Snell v6"
 
     while true; do
-        printf "请输入选项 [1-3]: "
+        printf "Введите вариант [1-3]: "
         read -r version_choice
         case "$version_choice" in
-            1) SNELL_VERSION_CHOICE="v4"; echo -e "${GREEN}已选择 Snell v4${RESET}"; break ;;
-            2) SNELL_VERSION_CHOICE="v5"; echo -e "${GREEN}已选择 Snell v5${RESET}"; break ;;
-            3) SNELL_VERSION_CHOICE="v6"; echo -e "${GREEN}已选择 Snell v6${RESET}"; echo -e "${YELLOW}v6 只接受 version = 6 的客户端（v4 / v5 的客户端连不上），客户端的 mode 也要和服务端一样${RESET}"; echo -e "${YELLOW}v6 已移除 QUIC 代理模式与 obfs，且不提供 armv7l 构建${RESET}"; echo -e "${YELLOW}加密模式：mode = ${SNELL_MODE}（客户端需配置相同的 mode）${RESET}"; break ;;
-            *) echo -e "${RED}请输入正确的选项 [1-3]${RESET}" ;;
+            1) SNELL_VERSION_CHOICE="v4"; echo -e "${GREEN}Выбран Snell v4${RESET}"; break ;;
+            2) SNELL_VERSION_CHOICE="v5"; echo -e "${GREEN}Выбран Snell v5${RESET}"; break ;;
+            3) SNELL_VERSION_CHOICE="v6"; echo -e "${GREEN}Выбран Snell v6${RESET}"; echo -e "${YELLOW}v6 принимает только клиентов с version = 6 (клиенты v4 / v5 подключиться не смогут), параметр mode на клиенте также должен совпадать с сервером${RESET}"; echo -e "${YELLOW}В v6 удалены режим проксирования QUIC и obfs, а также не предоставляются сборки под armv7l${RESET}"; echo -e "${YELLOW}Режим шифрования: mode = ${SNELL_MODE} (на клиенте должен быть настроен такой же mode)${RESET}"; break ;;
+            *) echo -e "${RED}Пожалуйста, введите корректный вариант [1-3]${RESET}" ;;
         esac
     done
 }
 
-# 读取已安装 v6 容器使用的 mode（读不到时回落到默认值）
+# Чтение параметра mode, используемого установленным контейнером v6 (при неудаче возвращается значение по умолчанию)
 get_snell_mode() {
     local conf_file="/etc/snell-docker/snell-server.conf"
     local mode=""
@@ -715,7 +715,7 @@ get_snell_mode() {
     echo "$mode"
 }
 
-# Snell 官方发布页（旧的 manual.nssurge.com/others/snell.html 已下线）
+# Официальная страница релизов Snell (старая manual.nssurge.com/others/snell.html отключена)
 SNELL_RELEASE_NOTES_URL="https://kb.nssurge.com/surge-knowledge-base/release-notes/snell"
 SNELL_RELEASE_NOTES_URL_ZH="https://kb.nssurge.com/surge-knowledge-base/zh/release-notes/snell"
 
@@ -727,36 +727,36 @@ get_latest_snell_version() {
     else
         SNELL_VERSION=$(get_latest_snell_v4_version)
     fi
-    echo -e "${GREEN}获取到版本: ${SNELL_VERSION}${RESET}"
+    echo -e "${GREEN}Получена версия: ${SNELL_VERSION}${RESET}"
 }
 
-# --- 端口和配置 ---
+# --- Порт и конфигурация ---
 
 get_user_port() {
     while true; do
-        printf "请输入要使用的端口号 (1-65535), 回车默认 [随机]: "
+        printf "Введите номер используемого порта (1-65535), нажмите Enter для значения по умолчанию [случайный]: "
         read -r PORT
         if [ -z "$PORT" ]; then 
             PORT=$(shuf -i 20000-65000 -n 1)
-            echo -e "${YELLOW}使用随机端口: $PORT${RESET}"
+            echo -e "${YELLOW}Используется случайный порт: $PORT${RESET}"
             break
         fi
         case "$PORT" in 
             ''|*[!0-9]*) 
-                echo -e "${RED}无效输入，请输入纯数字。${RESET}"
+                echo -e "${RED}Некорректный ввод, пожалуйста, введите только цифры.${RESET}"
                 continue
                 ;;
         esac
         if [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then 
-            echo -e "${GREEN}已选择端口: $PORT${RESET}"
+            echo -e "${GREEN}Выбран порт: $PORT${RESET}"
             break
         else 
-            echo -e "${RED}无效端口号，请输入 1 到 65535 之间的数字。${RESET}"
+            echo -e "${RED}Некорректный номер порта, введите число от 1 до 65535.${RESET}"
         fi
     done
 }
 
-# --- Docker 相关函数 ---
+# --- Функции для работы с Docker ---
 
 create_dockerfile() {
     local snell_url
@@ -780,30 +780,30 @@ create_dockerfile() {
             ;;
     esac
 
-    echo -e "${CYAN}创建 Dockerfile (多阶段构建: Debian提取glibc + Alpine运行)...${RESET}"
+    echo -e "${CYAN}Создание Dockerfile (многоэтапная сборка: извлечение glibc из Debian + запуск на Alpine)...${RESET}"
 
-    # 准备 entrypoint.sh：容器首次启动时由它自动生成配置与 PSK，
-    # 不再把含明文 PSK 的配置文件烘焙进镜像层
-    # 从仓库里运行时用本地的 docker/entrypoint.sh（脚本在 scripts/ 下）
+    # Подготовка entrypoint.sh: при первом запуске контейнера он автоматически генерирует конфигурацию и PSK,
+    # чтобы больше не запекать конфигурационный файл с открытым PSK в слои образа.
+    # При запуске из репозитория используется локальный docker/entrypoint.sh (сам скрипт находится в scripts/)
     if [ -f "${SCRIPT_DIR}/../docker/entrypoint.sh" ]; then
         cp "${SCRIPT_DIR}/../docker/entrypoint.sh" ./entrypoint.sh
-        echo -e "${GREEN}✓ 已复用 entrypoint.sh${RESET}"
+        echo -e "${GREEN}✓ Использован локальный entrypoint.sh${RESET}"
     else
-        echo -e "${CYAN}正在下载 entrypoint.sh...${RESET}"
+        echo -e "${CYAN}Скачивание entrypoint.sh...${RESET}"
         if ! curl -fsSL -o ./entrypoint.sh "${SNELL_RAW_BASE}/docker/entrypoint.sh"; then
-            echo -e "${RED}✗ entrypoint.sh 下载失败${RESET}"
+            echo -e "${RED}✗ Ошибка скачивания entrypoint.sh${RESET}"
             return 1
         fi
         if [ ! -s ./entrypoint.sh ] || ! sh -n ./entrypoint.sh 2>/dev/null; then
-            echo -e "${RED}✗ entrypoint.sh 校验失败（空文件或语法错误），已丢弃${RESET}"
+            echo -e "${RED}✗ Проверка entrypoint.sh не пройдена (пустой файл или синтаксическая ошибка), файл отброшен${RESET}"
             rm -f ./entrypoint.sh
             return 1
         fi
-        echo -e "${GREEN}✓ entrypoint.sh 下载并校验通过${RESET}"
+        echo -e "${GREEN}✓ entrypoint.sh скачан и успешно проверен${RESET}"
     fi
 
     cat > Dockerfile << EOF
-# 第一阶段: 使用 Debian 下载二进制并提供 glibc 运行时库
+# Этап 1: использование Debian для скачивания бинарного файла и предоставления библиотек среды выполнения glibc
 FROM debian:bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && \\
     rm -rf /var/lib/apt/lists/*
@@ -813,19 +813,19 @@ RUN curl -L -o snell.zip "${snell_url}" && \\
     rm -f snell.zip && \\
     chmod +x /app/snell-server
 
-# 第二阶段: Alpine 最终镜像，注入 glibc 运行时
+# Этап 2: финальный образ Alpine с внедрением библиотек среды выполнения glibc
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/snell-server /app/snell-server
 COPY --from=builder /lib/${gnu_lib_dir}/ /usr/glibc-compat/lib/
-# Snell may depend on libstdc++ and other runtime libraries under /usr/lib.
+# Snell может зависеть от libstdc++ и других библиотек времени выполнения в /usr/lib.
 COPY --from=builder /usr/lib/${gnu_lib_dir}/ /usr/glibc-compat/lib/
 RUN ${ld_linker_cmd}
 ENV LD_LIBRARY_PATH=/usr/glibc-compat/lib
 RUN mkdir -p /etc/snell
-# 不再 COPY 含明文 PSK 的配置文件：配置与 PSK 由 entrypoint.sh 在容器首次启动时自动生成，
-# 经 -v /etc/snell-docker:/etc/snell 持久化到宿主机，避免 secret 烘焙进镜像层
+# Конфигурационный файл с открытым PSK больше не копируется через COPY: конфигурация и PSK автоматически генерируются скриптом entrypoint.sh при первом запуске контейнера
+# и сохраняются на хосте через -v /etc/snell-docker:/etc/snell, чтобы секреты не попадали в слои образа
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 ENV SNELL_PORT=${PORT}
@@ -835,49 +835,49 @@ EXPOSE ${PORT}/tcp ${PORT}/udp
 ENTRYPOINT ["/app/entrypoint.sh"]
 EOF
 
-    echo -e "${GREEN}✓ Dockerfile 创建完成${RESET}"
+    echo -e "${GREEN}✓ Создание Dockerfile завершено${RESET}"
 }
 
 create_config_file() {
-    echo -e "${CYAN}准备配置目录...${RESET}"
+    echo -e "${CYAN}Подготовка каталога конфигурации...${RESET}"
 
-    # 配置目录经 -v 挂载进容器；配置文件与 PSK 由容器内 entrypoint.sh 在首次启动时自动生成，
-    # 不再把含明文 PSK 的配置文件烘焙进镜像层
+    # Каталог конфигурации монтируется в контейнер через -v; файл конфигурации и PSK автоматически генерируются внутри контейнера скриптом entrypoint.sh при первом запуске,
+    # чтобы не запекать файл конфигурации с открытым PSK в слои образа
     mkdir -p /etc/snell-docker
-    # 容器以 nobody（uid 65534）运行时，挂载目录必须对其可写，否则 entrypoint 无法生成配置
+    # Когда контейнер работает от имени nobody (uid 65534), монтируемый каталог должен быть доступен ему для записи, иначе entrypoint не сможет создать конфигурацию
     chown -R 65534:65533 /etc/snell-docker 2>/dev/null || \
-        echo -e "${YELLOW}提示: 无法设置 /etc/snell-docker 属主，若容器启动失败请手动执行 chown -R 65534:65533 /etc/snell-docker${RESET}"
+        echo -e "${YELLOW}Подсказка: не удалось назначить владельца для /etc/snell-docker; при сбое запуска контейнера выполните вручную chown -R 65534:65533 /etc/snell-docker${RESET}"
 
-    # 保存配置信息到变量
+    # Сохранение информации о конфигурации в переменную
     SNELL_PORT="$PORT"
 
-    echo -e "${GREEN}✓ 配置目录就绪: /etc/snell-docker${RESET}"
-    echo -e "${YELLOW}端口: ${PORT}${RESET}"
-    echo -e "${YELLOW}PSK 将在容器首次启动时自动生成，可通过 docker logs 查看客户端配置${RESET}"
+    echo -e "${GREEN}✓ Каталог конфигурации готов: /etc/snell-docker${RESET}"
+    echo -e "${YELLOW}Порт: ${PORT}${RESET}"
+    echo -e "${YELLOW}PSK будет сгенерирован автоматически при первом запуске контейнера; конфигурацию клиента можно посмотреть через docker logs${RESET}"
 }
 
 build_docker_image() {
-    echo -e "${CYAN}构建 Docker 镜像...${RESET}"
+    echo -e "${CYAN}Сборка Docker-образа...${RESET}"
     
     if docker build -t "${IMAGE_NAME}:${SNELL_VERSION}" -t "${IMAGE_NAME}:latest" .; then
-        echo -e "${GREEN}✓ Docker 镜像构建成功${RESET}"
+        echo -e "${GREEN}✓ Docker-образ успешно собран${RESET}"
     else
-        echo -e "${RED}✗ Docker 镜像构建失败${RESET}"
+        echo -e "${RED}✗ Ошибка сборки Docker-образа${RESET}"
         return 1
     fi
 }
 
 start_snell_container() {
-    echo -e "${CYAN}启动 Snell 容器...${RESET}"
+    echo -e "${CYAN}Запуск контейнера Snell...${RESET}"
     
-    # 停止并删除可能存在的旧容器
+    # Остановка и удаление старого контейнера, если он существует
     docker stop "${CONTAINER_NAME}" 2>/dev/null || true
     docker rm "${CONTAINER_NAME}" 2>/dev/null || true
     
-    # 第一步：不带 --restart 先测试启动，避免崩溃循环
-    echo -e "${CYAN}测试启动容器...${RESET}"
+    # Шаг 1: тестовый запуск без флага --restart во избежание бесконечного цикла перезапусков при сбое
+    echo -e "${CYAN}Тестовый запуск контейнера...${RESET}"
     local run_output
-    # -v /etc/snell-docker:/etc/snell：配置与 PSK 由 entrypoint 在首次启动时生成并持久化到宿主机
+    # -v /etc/snell-docker:/etc/snell: конфигурация и PSK генерируются скриптом entrypoint при первом запуске и сохраняются на хосте
     run_output=$(docker run -d \
         --name "${CONTAINER_NAME}" \
         -p "${SNELL_PORT}:${SNELL_PORT}/tcp" \
@@ -886,44 +886,44 @@ start_snell_container() {
         "${IMAGE_NAME}:latest" 2>&1)
     
     if [ $? -ne 0 ]; then
-        echo -e "${RED}✗ 容器创建失败${RESET}"
+        echo -e "${RED}✗ Не удалось создать контейнер${RESET}"
         echo "   $run_output"
         return 1
     fi
     
-    echo -e "${GREEN}✓ 容器已创建${RESET}"
+    echo -e "${GREEN}✓ Контейнер создан${RESET}"
     
-    # 等待启动
-    echo -e "${CYAN}等待服务启动...${RESET}"
+    # Ожидание запуска
+    echo -e "${CYAN}Ожидание запуска службы...${RESET}"
     sleep 5
     
-    # 检查容器是否在运行
+    # Проверка, работает ли контейнер
     local container_status=$(docker inspect --format='{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null)
     local exit_code=$(docker inspect --format='{{.State.ExitCode}}' "${CONTAINER_NAME}" 2>/dev/null)
     
     if [ "$container_status" = "running" ]; then
-        # 再等几秒确认稳定性
+        # Ждём ещё несколько секунд для подтверждения стабильности
         sleep 3
         container_status=$(docker inspect --format='{{.State.Status}}' "${CONTAINER_NAME}" 2>/dev/null)
     fi
     
     if [ "$container_status" != "running" ]; then
-        echo -e "${RED}✗ 容器启动失败，状态: $container_status，退出码: $exit_code${RESET}"
-        echo -e "${CYAN}容器日志:${RESET}"
+        echo -e "${RED}✗ Ошибка запуска контейнера, статус: $container_status, код выхода: $exit_code${RESET}"
+        echo -e "${CYAN}Логи контейнера:${RESET}"
         docker logs "${CONTAINER_NAME}" 2>&1 | sed 's/^/   /'
         
         if [ "$exit_code" = "127" ]; then
-            echo -e "${RED}退出码 127 = 程序或命令找不到${RESET}"
-            echo -e "${YELLOW}检查镜像内容...${RESET}"
-            # 使用 sh 启动一个临时容器检查镜像内容
+            echo -e "${RED}Код выхода 127 = программа или команда не найдена${RESET}"
+            echo -e "${YELLOW}Проверка содержимого образа...${RESET}"
+            # Запуск временного контейнера с sh для проверки содержимого образа
             docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
-            echo -e "${CYAN}镜像内 /app 目录:${RESET}"
+            echo -e "${CYAN}Каталог /app внутри образа:${RESET}"
             docker run --rm --entrypoint sh "${IMAGE_NAME}:latest" -c "ls -la /app/ 2>&1" 2>&1 | sed 's/^/   /'
-            echo -e "${CYAN}镜像内 /etc/snell 目录:${RESET}"
+            echo -e "${CYAN}Каталог /etc/snell внутри образа:${RESET}"
             docker run --rm --entrypoint sh -v /etc/snell-docker:/etc/snell "${IMAGE_NAME}:latest" -c "ls -la /etc/snell/ 2>&1" 2>&1 | sed 's/^/   /'
-            echo -e "${CYAN}二进制文件信息:${RESET}"
+            echo -e "${CYAN}Информация о бинарном файле:${RESET}"
             docker run --rm --entrypoint sh "${IMAGE_NAME}:latest" -c "file /app/snell-server 2>&1" 2>&1 | sed 's/^/   /'
-            echo -e "${CYAN}手动执行测试:${RESET}"
+            echo -e "${CYAN}Тест ручного запуска:${RESET}"
             docker run --rm --entrypoint sh -v /etc/snell-docker:/etc/snell "${IMAGE_NAME}:latest" -c "/app/snell-server -c /etc/snell/snell-server.conf" 2>&1 | head -5 | sed 's/^/   /'
         fi
         
@@ -931,37 +931,37 @@ start_snell_container() {
         return 1
     fi
     
-    echo -e "${GREEN}✓ 容器运行正常${RESET}"
+    echo -e "${GREEN}✓ Контейнер работает нормально${RESET}"
     
-    # 检查端口映射
+    # Проверка проброса портов
     local port_mapping=$(docker port "${CONTAINER_NAME}" 2>/dev/null)
     if [ -n "$port_mapping" ]; then
-        echo -e "${GREEN}✓ 端口映射: $port_mapping${RESET}"
+        echo -e "${GREEN}✓ Проброс портов: $port_mapping${RESET}"
     fi
     
-    # 显示容器日志
-    echo -e "${CYAN}容器日志:${RESET}"
+    # Отображение логов контейнера
+    echo -e "${CYAN}Логи контейнера:${RESET}"
     docker logs "${CONTAINER_NAME}" 2>&1 | tail -5 | sed 's/^/   /'
     
-    # 测试成功，现在重建并启用自动重启
-    echo -e "${CYAN}启用自动重启策略...${RESET}"
+    # Тест прошёл успешно, включаем политику автоматического перезапуска
+    echo -e "${CYAN}Включение политики автоматического перезапуска...${RESET}"
     docker update --restart unless-stopped "${CONTAINER_NAME}" 2>/dev/null || true
     
-    echo -e "${GREEN}✓ Snell 容器启动成功${RESET}"
+    echo -e "${GREEN}✓ Контейнер Snell успешно запущен${RESET}"
     return 0
 }
 
-# --- 安装函数 ---
+# --- Функции установки ---
 
 install_snell() {
     check_root
     ensure_curl
     check_docker
     
-    # 检查是否已有容器运行
+    # Проверка наличия уже существующего контейнера
     if container_exists; then
-        echo -e "${YELLOW}检测到已存在的 Snell 容器，是否要重新安装？${RESET}"
-        printf "输入 y 继续，其他键取消: "
+        echo -e "${YELLOW}Обнаружен уже существующий контейнер Snell. Переустановить его?${RESET}"
+        printf "Введите y для продолжения, любую другую клавишу для отмены: "
         read -r confirm
         if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
             return
@@ -971,160 +971,160 @@ install_snell() {
     
     select_snell_version
 
-    # v6 不支持 armv7l
+    # v6 не поддерживает armv7l
     local _arch=$(uname -m)
     if [ "$SNELL_VERSION_CHOICE" = "v6" ] && { [ "$_arch" = "armv7l" ] || [ "$_arch" = "armv7" ]; }; then
-        echo -e "${RED}Snell v6 暂不支持 armv7l 架构，请选择 v4 或 v5。${RESET}"
+        echo -e "${RED}Snell v6 пока не поддерживает архитектуру armv7l, пожалуйста, выберите v4 или v5.${RESET}"
         return 1
     fi
 
     get_latest_snell_version
     get_user_port
     
-    # 创建临时工作目录
+    # Создание временного рабочего каталога
     WORK_DIR="/tmp/snell-docker-$(date +%s)"
     mkdir -p "$WORK_DIR"
     cd "$WORK_DIR"
     
-    echo -e "${CYAN}开始 Docker 方式安装 Snell ${SNELL_VERSION}...${RESET}"
+    echo -e "${CYAN}Начало установки Snell ${SNELL_VERSION} через Docker...${RESET}"
     
-    # 创建配置文件
+    # Создание файла конфигурации
     if ! create_config_file; then
-        echo -e "${RED}安装失败！${RESET}"
+        echo -e "${RED}Ошибка установки!${RESET}"
         cd - >/dev/null
         rm -rf "$WORK_DIR"
         return 1
     fi
 
-    # 创建 Dockerfile
+    # Создание Dockerfile
     if ! create_dockerfile; then
-        echo -e "${RED}安装失败！${RESET}"
+        echo -e "${RED}Ошибка установки!${RESET}"
         cd - >/dev/null
         rm -rf "$WORK_DIR"
         return 1
     fi
 
-    # 构建镜像
+    # Сборка образа
     if ! build_docker_image; then
-        echo -e "${RED}安装失败！${RESET}"
+        echo -e "${RED}Ошибка установки!${RESET}"
         cd - >/dev/null
         rm -rf "$WORK_DIR"
         return 1
     fi
     
-    # 启动容器
+    # Запуск контейнера
     if ! start_snell_container; then
-        echo -e "${RED}安装失败！${RESET}"
+        echo -e "${RED}Ошибка установки!${RESET}"
         cd - >/dev/null
         rm -rf "$WORK_DIR"
         return 1
     fi
     
-    # 清理临时文件
+    # Очистка временных файлов
     cd - >/dev/null
     rm -rf "$WORK_DIR"
     
-    echo -e "${GREEN}🎉 Snell Server 安装完成！${RESET}"
+    echo -e "${GREEN}🎉 Установка Snell Server завершена!${RESET}"
     
-    # 配置防火墙
+    # Настройка файрвола
     configure_firewall
     
-    # 显示配置信息
+    # Отображение информации о конфигурации
     show_information
 }
 
-# --- 管理函数 ---
+# --- Функции управления ---
 
 uninstall_snell() {
     check_root
     
-    echo -e "${CYAN}正在卸载 Snell Docker 容器...${RESET}"
+    echo -e "${CYAN}Удаление Docker-контейнера Snell...${RESET}"
     
-    # 停止并删除容器
+    # Остановка и удаление контейнера
     if docker stop "${CONTAINER_NAME}" 2>/dev/null; then
-        echo -e "${GREEN}✓ 容器已停止${RESET}"
+        echo -e "${GREEN}✓ Контейнер остановлен${RESET}"
     fi
     
     if docker rm "${CONTAINER_NAME}" 2>/dev/null; then
-        echo -e "${GREEN}✓ 容器已删除${RESET}"
+        echo -e "${GREEN}✓ Контейнер удалён${RESET}"
     fi
     
-    # 询问是否删除镜像
-    printf "是否同时删除 Docker 镜像？[y/N]: "
+    # Запрос на удаление образа
+    printf "Удалить также Docker-образ? [y/N]: "
     read -r remove_image
     if [ "$remove_image" = "y" ] || [ "$remove_image" = "Y" ]; then
         docker rmi "${IMAGE_NAME}:latest" 2>/dev/null || true
         docker rmi $(docker images "${IMAGE_NAME}" -q) 2>/dev/null || true
-        echo -e "${GREEN}✓ Docker 镜像已删除${RESET}"
+        echo -e "${GREEN}✓ Docker-образ удалён${RESET}"
     fi
     
-    # 防火墙里为它开的端口关掉（端口从配置里读，所以在删配置之前）
+    # Закрытие порта в файрволе (порт читается из конфига, поэтому выполняем до удаления конфига)
     if [ -f "/etc/snell-docker/snell-server.conf" ]; then
         old_port=$(grep 'listen' /etc/snell-docker/snell-server.conf | sed 's/.*://' | tr -d ' ')
         [ -n "$old_port" ] && close_port "$old_port"
     fi
 
-    # 清理配置文件
+    # Очистка конфигурационных файлов
     if [ -d "/etc/snell-docker" ]; then
         rm -rf /etc/snell-docker
-        echo -e "${GREEN}✓ 配置文件已删除${RESET}"
+        echo -e "${GREEN}✓ Файлы конфигурации удалены${RESET}"
     fi
     
-    echo -e "${GREEN}🗑️  Snell 已完全卸载${RESET}"
+    echo -e "${GREEN}🗑️  Snell полностью удалён${RESET}"
 }
 
 restart_snell() {
     check_root
     
     if ! container_exists; then
-        echo -e "${RED}错误: Snell 容器不存在${RESET}"
+        echo -e "${RED}Ошибка: контейнер Snell не существует${RESET}"
         return 1
     fi
     
-    echo -e "${CYAN}正在重启 Snell 容器...${RESET}"
+    echo -e "${CYAN}Перезапуск контейнера Snell...${RESET}"
     
     if docker restart "${CONTAINER_NAME}"; then
         sleep 2
         if container_running; then
-            echo -e "${GREEN}✓ Snell 容器重启成功${RESET}"
+            echo -e "${GREEN}✓ Контейнер Snell успешно перезапущен${RESET}"
         else
-            echo -e "${RED}✗ 容器重启后异常${RESET}"
-            echo -e "${YELLOW}查看日志: docker logs ${CONTAINER_NAME}${RESET}"
+            echo -e "${RED}✗ Сбой в работе контейнера после перезапуска${RESET}"
+            echo -e "${YELLOW}Просмотр логов: docker logs ${CONTAINER_NAME}${RESET}"
         fi
     else
-        echo -e "${RED}✗ 容器重启失败${RESET}"
+        echo -e "${RED}✗ Не удалось перезапустить контейнер${RESET}"
     fi
 }
 
 check_status() {
-    echo -e "${CYAN}=== Snell Docker 容器状态 ===${RESET}"
+    echo -e "${CYAN}=== Статус Docker-контейнера Snell ===${RESET}"
     
     if container_exists; then
-        echo -e "\n${CYAN}容器信息:${RESET}"
+        echo -e "\n${CYAN}Информация о контейнере:${RESET}"
         docker ps -a --filter "name=${CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
         
-        echo -e "\n${CYAN}资源使用情况:${RESET}"
+        echo -e "\n${CYAN}Использование ресурсов:${RESET}"
         docker stats "${CONTAINER_NAME}" --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
         
-        echo -e "\n${CYAN}容器日志 (最后10行):${RESET}"
+        echo -e "\n${CYAN}Логи контейнера (последние 10 строк):${RESET}"
         docker logs --tail 10 "${CONTAINER_NAME}"
     else
-        echo -e "${RED}Snell 容器不存在${RESET}"
+        echo -e "${RED}Контейнер Snell не существует${RESET}"
     fi
 }
 
-# 网络连接诊断
+# Диагностика сетевого подключения
 network_diagnosis() {
-    echo -e "${CYAN}🔍 开始 Snell 网络连接诊断...${RESET}"
+    echo -e "${CYAN}🔍 Запуск диагностики сетевого подключения Snell...${RESET}"
     echo -e "${CYAN}===========================================${RESET}"
     
-    # 检查配置文件是否存在
+    # Проверка существования файла конфигурации
     if [ ! -f "/etc/snell-docker/snell-server.conf" ]; then
-        echo -e "${RED}❌ 配置文件不存在，请先安装 Snell${RESET}"
+        echo -e "${RED}❌ Файл конфигурации не существует, сначала установите Snell${RESET}"
         return 1
     fi
     
-    # 读取配置
+    # Чтение конфигурации
     local port=$(grep 'listen' /etc/snell-docker/snell-server.conf | sed 's/.*://')
     local psk=$(grep 'psk' /etc/snell-docker/snell-server.conf | sed 's/psk[[:space:]]*=[[:space:]]*//')
     local version_choice
@@ -1138,281 +1138,281 @@ network_diagnosis() {
         fi
     fi
     
-    echo -e "${YELLOW}📋 服务配置信息:${RESET}"
-    echo "   端口: $port"
-    echo "   版本: $version_choice"
+    echo -e "${YELLOW}📋 Информация о конфигурации службы:${RESET}"
+    echo "   Порт: $port"
+    echo "   Версия: $version_choice"
     echo "   PSK: $(printf '%s' "$psk" | cut -c 1-10)..."
     echo ""
     
-    # 1. 检查容器状态
-    echo -e "${CYAN}1️⃣  检查容器状态...${RESET}"
+    # 1. Проверка статуса контейнера
+    echo -e "${CYAN}1️⃣  Проверка статуса контейнера...${RESET}"
     if container_running; then
-        echo -e "   ${GREEN}✅ 容器正在运行${RESET}"
+        echo -e "   ${GREEN}✅ Контейнер работает${RESET}"
         local container_ports=$(docker port "${CONTAINER_NAME}")
-        echo "   端口映射: $container_ports"
+        echo "   Проброс портов: $container_ports"
     else
-        echo -e "   ${RED}❌ 容器未运行${RESET}"
+        echo -e "   ${RED}❌ Контейнер не запущен${RESET}"
         if container_exists; then
-            echo -e "   ${YELLOW}⚠️  容器存在但已停止，尝试启动...${RESET}"
+            echo -e "   ${YELLOW}⚠️  Контейнер существует, но остановлен. Попытка запуска...${RESET}"
             docker start "${CONTAINER_NAME}"
             sleep 2
         else
-            echo -e "   ${RED}❌ 容器不存在，请重新安装${RESET}"
+            echo -e "   ${RED}❌ Контейнер не существует, выполните переустановку${RESET}"
             return 1
         fi
     fi
     echo ""
     
-    # 2. 检查 Docker 端口映射
-    echo -e "${CYAN}2️⃣  检查 Docker 端口映射...${RESET}"
+    # 2. Проверка проброса портов Docker
+    echo -e "${CYAN}2️⃣  Проверка проброса портов Docker...${RESET}"
     local port_mapping=$(docker port "${CONTAINER_NAME}" 2>/dev/null)
     if [ -n "$port_mapping" ]; then
-        echo -e "   ${GREEN}✅ Docker 端口映射存在${RESET}"
+        echo -e "   ${GREEN}✅ Проброс портов Docker настроен${RESET}"
         echo "   $port_mapping" | sed 's/^/   /'
         
-        # 检查宿主机端口是否在监听
+        # Проверка, прослушивается ли порт на хосте
         if netstat -tlnp 2>/dev/null | grep ":$port " | grep -q LISTEN; then
-            echo -e "   ${GREEN}✅ 宿主机端口 $port 正在监听${RESET}"
+            echo -e "   ${GREEN}✅ Порт хоста $port прослушивается${RESET}"
             netstat -tlnp 2>/dev/null | grep ":$port " | head -1 | sed 's/^/   /'
         else
-            echo -e "   ${RED}❌ 宿主机端口 $port 未在监听${RESET}"
+            echo -e "   ${RED}❌ Порт хоста $port не прослушивается${RESET}"
         fi
     else
-        echo -e "   ${RED}❌ Docker 端口映射不存在或异常${RESET}"
-        echo -e "   ${YELLOW}检查容器详细状态...${RESET}"
+        echo -e "   ${RED}❌ Проброс портов Docker отсутствует или работает некорректно${RESET}"
+        echo -e "   ${YELLOW}Проверка подробного статуса контейнера...${RESET}"
         
-        # 详细检查容器状态
+        # Подробная проверка статуса контейнера
         local container_status=$(docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.Status}}" 2>/dev/null)
-        echo "   容器状态: $container_status"
+        echo "   Статус контейнера: $container_status"
         
-        # 检查镜像是否存在
+        # Проверка существования образа
         if ! docker images | grep -q "${IMAGE_NAME}"; then
-            echo -e "   ${RED}❌ Docker 镜像不存在，需要重新安装${RESET}"
-            echo -e "   ${YELLOW}请选择主菜单选项 1 重新安装 Snell${RESET}"
+            echo -e "   ${RED}❌ Docker-образ не существует, требуется переустановка${RESET}"
+            echo -e "   ${YELLOW}Выберите пункт 1 в главном меню для переустановки Snell${RESET}"
             return 1
         fi
         
-        echo -e "   ${YELLOW}尝试重建容器...${RESET}"
+        echo -e "   ${YELLOW}Попытка пересоздания контейнера...${RESET}"
         
-        # 停止并删除容器
+        # Остановка и удаление контейнера
         docker stop "${CONTAINER_NAME}" 2>/dev/null || true
         docker rm "${CONTAINER_NAME}" 2>/dev/null || true
         
-        # 重新启动容器（配置已内置于镜像，无需挂载）
-        echo -e "   ${CYAN}重新创建容器...${RESET}"
+        # Повторный запуск контейнера (конфигурация встроена в образ, монтирование не требуется)
+        echo -e "   ${CYAN}Пересоздание контейнера...${RESET}"
         if docker run -d \
             --name "${CONTAINER_NAME}" \
             --restart unless-stopped \
             -p "${port}:${port}/tcp" \
             -p "${port}:${port}/udp" \
             "${IMAGE_NAME}:latest" 2>/dev/null; then
-            echo -e "   ${GREEN}✅ 容器已重新创建${RESET}"
+            echo -e "   ${GREEN}✅ Контейнер пересоздан${RESET}"
             sleep 5
             
-            # 验证新容器
+            # Проверка нового контейнера
             local new_restarting=$(docker inspect --format='{{.State.Restarting}}' "${CONTAINER_NAME}" 2>/dev/null)
             if [ "$new_restarting" = "true" ]; then
-                echo -e "   ${RED}❌ 容器仍在重启，建议选项1重新安装${RESET}"
+                echo -e "   ${RED}❌ Контейнер продолжает перезапускаться, рекомендуется переустановка через пункт 1${RESET}"
                 docker logs --tail 5 "${CONTAINER_NAME}" 2>&1 | sed 's/^/   /'
             else
                 local new_port_mapping=$(docker port "${CONTAINER_NAME}" 2>/dev/null)
                 if [ -n "$new_port_mapping" ]; then
-                    echo -e "   ${GREEN}✅ 端口映射已修复: $new_port_mapping${RESET}"
+                    echo -e "   ${GREEN}✅ Проброс портов восстановлен: $new_port_mapping${RESET}"
                 else
-                    echo -e "   ${RED}❌ 端口映射仍有问题${RESET}"
+                    echo -e "   ${RED}❌ Проблема с пробросом портов сохраняется${RESET}"
                 fi
             fi
         else
-            echo -e "   ${RED}❌ 容器重新创建失败${RESET}"
-            echo -e "   ${YELLOW}可能是镜像问题，建议重新安装${RESET}"
+            echo -e "   ${RED}❌ Не удалось пересоздать контейнер${RESET}"
+            echo -e "   ${YELLOW}Возможна проблема с образом, рекомендуется переустановка${RESET}"
         fi
     fi
     echo ""
     
-    # 3. 检查防火墙规则
-    echo -e "${CYAN}3️⃣  检查防火墙规则...${RESET}"
+    # 3. Проверка правил файрвола
+    echo -e "${CYAN}3️⃣  Проверка правил файрвола...${RESET}"
     if command -v iptables >/dev/null 2>&1; then
         if iptables -L INPUT -n | grep -q "dpt:$port"; then
-            echo -e "   ${GREEN}✅ iptables 规则存在${RESET}"
+            echo -e "   ${GREEN}✅ Правило iptables существует${RESET}"
             iptables -L INPUT -n | grep "dpt:$port" | head -1 | sed 's/^/   /'
         else
-            echo -e "   ${RED}❌ iptables 规则不存在${RESET}"
-            echo -e "   ${YELLOW}尝试添加规则...${RESET}"
+            echo -e "   ${RED}❌ Правило iptables отсутствует${RESET}"
+            echo -e "   ${YELLOW}Попытка добавления правила...${RESET}"
             iptables -I INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null && \
-            echo -e "   ${GREEN}✅ iptables 规则已添加${RESET}" || \
-            echo -e "   ${RED}❌ 添加 iptables 规则失败${RESET}"
+            echo -e "   ${GREEN}✅ Правило iptables добавлено${RESET}" || \
+            echo -e "   ${RED}❌ Не удалось добавить правило iptables${RESET}"
         fi
     else
-        echo -e "   ${YELLOW}⚠️  iptables 不可用${RESET}"
+        echo -e "   ${YELLOW}⚠️  iptables недоступен${RESET}"
     fi
     
     if command -v ufw >/dev/null 2>&1; then
         if ufw status | grep -q "$port"; then
-            echo -e "   ${GREEN}✅ UFW 规则存在${RESET}"
+            echo -e "   ${GREEN}✅ Правило UFW существует${RESET}"
         else
-            echo -e "   ${YELLOW}⚠️  UFW 规则可能不存在${RESET}"
+            echo -e "   ${YELLOW}⚠️  Правило UFW может отсутствовать${RESET}"
         fi
     fi
     echo ""
     
-    # 4. 外部端口连通性测试
-    echo -e "${CYAN}4️⃣  测试外部端口连通性...${RESET}"
+    # 4. Тест внешней доступности порта
+    echo -e "${CYAN}4️⃣  Тестирование внешней доступности порта...${RESET}"
     local server_ip=$(curl -s4 --connect-timeout 5 https://api.ipify.org 2>/dev/null)
     if [ -n "$server_ip" ]; then
-        echo "   服务器 IP: $server_ip"
+        echo "   IP сервера: $server_ip"
         
-        # 使用多种方法测试端口
-        echo -e "   ${CYAN}测试端口 $port...${RESET}"
+        # Тестирование порта несколькими способами
+        echo -e "   ${CYAN}Тестирование порта $port...${RESET}"
         
-        # 方法1: 使用 nc (netcat)
+        # Способ 1: использование nc (netcat)
         if command -v nc >/dev/null 2>&1; then
             if timeout 5 nc -z "$server_ip" "$port" 2>/dev/null; then
-                echo -e "   ${GREEN}✅ nc 测试通过${RESET}"
+                echo -e "   ${GREEN}✅ Тест nc пройден${RESET}"
             else
-                echo -e "   ${RED}❌ nc 测试失败${RESET}"
+                echo -e "   ${RED}❌ Тест nc не пройден${RESET}"
             fi
         fi
         
-        # 方法2: 使用 telnet
+        # Способ 2: использование telnet
         if command -v telnet >/dev/null 2>&1; then
             if timeout 5 sh -c "echo '' | telnet $server_ip $port" 2>/dev/null | grep -q Connected; then
-                echo -e "   ${GREEN}✅ telnet 测试通过${RESET}"
+                echo -e "   ${GREEN}✅ Тест telnet пройден${RESET}"
             else
-                echo -e "   ${RED}❌ telnet 测试失败${RESET}"
+                echo -e "   ${RED}❌ Тест telnet не пройден${RESET}"
             fi
         fi
         
-        # 方法3: 使用在线端口检测
-        echo -e "   ${YELLOW}💡 在线端口检测工具:${RESET}"
+        # Способ 3: использование онлайн-сервисов проверки портов
+        echo -e "   ${YELLOW}💡 Онлайн-инструменты проверки портов:${RESET}"
         echo "   https://www.yougetsignal.com/tools/open-ports/"
         echo "   https://tool.chinaz.com/port/"
-        echo "   输入 IP: $server_ip, 端口: $port"
+        echo "   Введите IP: $server_ip, порт: $port"
     else
-        echo -e "   ${RED}❌ 无法获取服务器 IP${RESET}"
+        echo -e "   ${RED}❌ Не удалось получить IP сервера${RESET}"
     fi
     echo ""
     
-    # 5. 容器内部详细检查
-    echo -e "${CYAN}5️⃣  容器内部详细检查...${RESET}"
+    # 5. Подробная внутренняя проверка контейнера
+    echo -e "${CYAN}5️⃣  Подробная внутренняя проверка контейнера...${RESET}"
     if container_running; then
-        # 检查容器内部端口
-        echo -e "   ${CYAN}检查容器内部端口监听...${RESET}"
+        # Проверка портов внутри контейнера
+        echo -e "   ${CYAN}Проверка прослушивания портов внутри контейнера...${RESET}"
         local container_netstat=$(docker exec "${CONTAINER_NAME}" netstat -tln 2>/dev/null | grep ":$port " || echo "")
         if [ -n "$container_netstat" ]; then
-            echo -e "   ${GREEN}✅ 容器内端口正常监听${RESET}"
+            echo -e "   ${GREEN}✅ Порт внутри контейнера нормально прослушивается${RESET}"
             echo "   $container_netstat" | sed 's/^/   /'
         else
-            echo -e "   ${RED}❌ 容器内端口未监听${RESET}"
+            echo -e "   ${RED}❌ Порт внутри контейнера не прослушивается${RESET}"
         fi
         
-        # 检查 Snell 进程
-        echo -e "   ${CYAN}检查 Snell 进程状态...${RESET}"
+        # Проверка процесса Snell
+        echo -e "   ${CYAN}Проверка состояния процесса Snell...${RESET}"
         local snell_process=$(docker exec "${CONTAINER_NAME}" ps aux 2>/dev/null | grep -v grep | grep snell || echo "")
         if [ -n "$snell_process" ]; then
-            echo -e "   ${GREEN}✅ Snell 进程正在运行${RESET}"
+            echo -e "   ${GREEN}✅ Процесс Snell запущен${RESET}"
             echo "$snell_process" | sed 's/^/   /'
             
-            # 检查进程状态是否正常
+            # Проверка нормального состояния процесса
             if echo "$snell_process" | grep -q "\[snell-server\]"; then
-                echo -e "   ${RED}⚠️  检测到僵尸进程格式，Snell 可能未正常启动${RESET}"
-                echo -e "   ${YELLOW}尝试重新启动 Snell 服务...${RESET}"
+                echo -e "   ${RED}⚠️  Обнаружен формат зомби-процесса, возможно, Snell не запустился должным образом${RESET}"
+                echo -e "   ${YELLOW}Попытка перезапуска службы Snell...${RESET}"
                 
-                # 杀死可能的僵尸进程
+                # Завершение возможных зомби-процессов
                 docker exec "${CONTAINER_NAME}" pkill -f snell 2>/dev/null || true
                 sleep 1
                 
-                # 重新启动 Snell
-                echo -e "   ${CYAN}重新启动 Snell 服务...${RESET}"
+                # Повторный запуск Snell
+                echo -e "   ${CYAN}Повторный запуск службы Snell...${RESET}"
                 if docker exec -d "${CONTAINER_NAME}" sh -c "cd /app && exec ./snell-server -c /etc/snell/snell-server.conf" 2>/dev/null; then
                     sleep 3
                     local new_snell_process=$(docker exec "${CONTAINER_NAME}" ps aux 2>/dev/null | grep -v grep | grep snell || echo "")
                     if [ -n "$new_snell_process" ]; then
-                        echo -e "   ${GREEN}✓ Snell 服务重启成功${RESET}"
+                        echo -e "   ${GREEN}✓ Служба Snell успешно перезапущена${RESET}"
                         echo "$new_snell_process" | sed 's/^/   RESTART: /'
                     else
-                        echo -e "   ${RED}✗ Snell 服务重启失败${RESET}"
+                        echo -e "   ${RED}✗ Не удалось перезапустить службу Snell${RESET}"
                     fi
                 else
-                    echo -e "   ${RED}✗ 重启命令执行失败${RESET}"
+                    echo -e "   ${RED}✗ Ошибка выполнения команды перезапуска${RESET}"
                 fi
             fi
         else
-            echo -e "   ${RED}❌ Snell 进程未运行${RESET}"
+            echo -e "   ${RED}❌ Процесс Snell не запущен${RESET}"
         fi
         
-        # 检查配置文件
-        echo -e "   ${CYAN}检查配置文件...${RESET}"
+        # Проверка файла конфигурации
+        echo -e "   ${CYAN}Проверка файла конфигурации...${RESET}"
         local ls_result=$(docker exec "${CONTAINER_NAME}" ls -la /etc/snell/ 2>/dev/null || echo "")
         if [ -n "$ls_result" ]; then
-            echo -e "   ${GREEN}✅ 配置目录存在${RESET}"
+            echo -e "   ${GREEN}✅ Каталог конфигурации существует${RESET}"
             echo "$ls_result" | sed 's/^/   /'
             
-            # 检查配置文件内容
+            # Проверка содержимого файла конфигурации
             local config_content=$(docker exec "${CONTAINER_NAME}" cat /etc/snell/snell-server.conf 2>/dev/null || echo "")
             if [ -n "$config_content" ]; then
-                echo -e "   ${GREEN}✅ 配置文件存在且有内容${RESET}"
+                echo -e "   ${GREEN}✅ Файл конфигурации существует и не пуст${RESET}"
                 echo "$config_content" | sed 's/^/   /'
             else
-                echo -e "   ${RED}❌ 配置文件不存在或为空${RESET}"
-                echo -e "   ${YELLOW}配置文件应内置于镜像中，建议选项1重新安装${RESET}"
+                echo -e "   ${RED}❌ Файл конфигурации отсутствует или пуст${RESET}"
+                echo -e "   ${YELLOW}Рекомендуется выбрать пункт 1 для переустановки${RESET}"
             fi
         else
-            echo -e "   ${RED}❌ 配置目录不存在${RESET}"
-            echo -e "   ${YELLOW}这表明容器挂载有严重问题${RESET}"
+            echo -e "   ${RED}❌ Каталог конфигурации не существует${RESET}"
+            echo -e "   ${YELLOW}Это указывает на серьёзную проблему с монтированием тома контейнера${RESET}"
         fi
         
-        # 检查 Snell 二进制文件
-        echo -e "   ${CYAN}检查 Snell 二进制文件...${RESET}"
+        # Проверка бинарного файла Snell
+        echo -e "   ${CYAN}Проверка бинарного файла Snell...${RESET}"
         local snell_binary=$(docker exec "${CONTAINER_NAME}" ls -la /app/snell-server 2>/dev/null || echo "")
         if [ -n "$snell_binary" ]; then
-            echo -e "   ${GREEN}✅ Snell 二进制文件存在${RESET}"
+            echo -e "   ${GREEN}✅ Бинарный файл Snell существует${RESET}"
             echo "$snell_binary" | sed 's/^/   /'
             
-            # 尝试手动运行测试
-            echo -e "   ${CYAN}测试 Snell 二进制文件...${RESET}"
+            # Попытка тестового запуска вручную
+            echo -e "   ${CYAN}Тестирование бинарного файла Snell...${RESET}"
             local snell_test=$(docker exec "${CONTAINER_NAME}" timeout 3s /app/snell-server --help 2>&1 || echo "")
             if echo "$snell_test" | grep -q "usage\|help\|version"; then
-                echo -e "   ${GREEN}✅ Snell 二进制文件可执行${RESET}"
+                echo -e "   ${GREEN}✅ Бинарный файл Snell является исполняемым${RESET}"
             else
-                echo -e "   ${RED}❌ Snell 二进制文件可能有问题${RESET}"
+                echo -e "   ${RED}❌ Возможна проблема с бинарным файлом Snell${RESET}"
                 echo "$snell_test" | sed 's/^/   /' | head -3
                 
-                # 检查二进制文件完整性
-                echo -e "   ${CYAN}检查二进制文件完整性...${RESET}"
+                # Проверка целостности бинарного файла
+                echo -e "   ${CYAN}Проверка целостности бинарного файла...${RESET}"
                 local file_info=$(docker exec "${CONTAINER_NAME}" file /app/snell-server 2>/dev/null || echo "")
-                echo "   文件信息: $file_info"
+                echo "   Информация о файле: $file_info"
                 
                 local file_size=$(docker exec "${CONTAINER_NAME}" stat -c%s /app/snell-server 2>/dev/null || echo "0")
-                echo "   文件大小: $file_size bytes"
+                echo "   Размер файла: $file_size байт"
                 
                 if [ "$file_size" -lt 100000 ]; then
-                    echo -e "   ${RED}❌ binary文件大小异常，可能下载不完整${RESET}"
+                    echo -e "   ${RED}❌ Ненормальный размер бинарного файла, возможно, он скачался не полностью${RESET}"
                 fi
             fi
         else
-            echo -e "   ${RED}❌ Snell 二进制文件不存在${RESET}"
-            echo -e "   ${YELLOW}这表明 Docker 镜像构建失败${RESET}"
-            echo -e "   ${YELLOW}需要重新安装以重建镜像${RESET}"
+            echo -e "   ${RED}❌ Бинарный файл Snell не существует${RESET}"
+            echo -e "   ${YELLOW}Это означает, что сборка Docker-образа завершилась неудачей${RESET}"
+            echo -e "   ${YELLOW}Требуется переустановка для пересборки образа${RESET}"
         fi
         
-        # 检查完整的容器日志
-        echo -e "   ${CYAN}检查完整容器日志...${RESET}"
+        # Проверка полных логов контейнера
+        echo -e "   ${CYAN}Проверка полных логов контейнера...${RESET}"
         local full_logs=$(docker logs --tail 50 "${CONTAINER_NAME}" 2>&1)
         if [ -n "$full_logs" ]; then
-            echo -e "   ${YELLOW}最近日志 (最后10行):${RESET}"
+            echo -e "   ${YELLOW}Последние логи (последние 10 строк):${RESET}"
             echo "$full_logs" | tail -10 | sed 's/^/   /'
             
-            # 检查特定错误
+            # Поиск конкретных ошибок
             local error_logs=$(echo "$full_logs" | grep -i "error\|failed\|refused\|cannot\|permission\|bind" || echo "")
             if [ -n "$error_logs" ]; then
-                echo -e "   ${RED}发现错误日志:${RESET}"
+                echo -e "   ${RED}Обнаружены ошибки в логах:${RESET}"
                 echo "$error_logs" | sed 's/^/   /'
             fi
         else
-            echo -e "   ${YELLOW}无日志输出${RESET}"
+            echo -e "   ${YELLOW}Вывод в логах отсутствует${RESET}"
         fi
         
-        # 尝试修复
+        # Попытка восстановления
         local needs_fix=false
         if [ -z "$snell_process" ]; then
             needs_fix=true
@@ -1421,51 +1421,51 @@ network_diagnosis() {
         fi
         
         if [ "$needs_fix" = "true" ]; then
-            echo -e "   ${YELLOW}尝试修复容器...${RESET}"
-            echo -e "   ${CYAN}重启容器中的 Snell 服务...${RESET}"
+            echo -e "   ${YELLOW}Попытка восстановления контейнера...${RESET}"
+            echo -e "   ${CYAN}Перезапуск службы Snell внутри контейнера...${RESET}"
             
-            # 清理可能的僵尸进程
+            # Очистка возможных зомби-процессов
             docker exec "${CONTAINER_NAME}" pkill -f snell 2>/dev/null || true
             docker exec "${CONTAINER_NAME}" pkill -f "sleep" 2>/dev/null || true
             sleep 2
             
-            # 方法1: 尝试直接启动 
-            echo -e "   ${CYAN}尝试直接启动 Snell 服务...${RESET}"
+            # Способ 1: попытка прямого запуска
+            echo -e "   ${CYAN}Попытка прямого запуска службы Snell...${RESET}"
             if docker exec -d "${CONTAINER_NAME}" sh -c "cd /app && exec ./snell-server -c /etc/snell/snell-server.conf" 2>/dev/null; then
                 sleep 5
                 
-                # 检查是否启动成功
+                # Проверка успешности запуска
                 local fixed_process=$(docker exec "${CONTAINER_NAME}" ps aux 2>/dev/null | grep -v grep | grep snell || echo "")
                 local fixed_netstat=$(docker exec "${CONTAINER_NAME}" netstat -tln 2>/dev/null | grep ":$port " || echo "")
                 
                 if [ -n "$fixed_process" ] && [ -n "$fixed_netstat" ]; then
-                    echo -e "   ${GREEN}✅ Snell 服务修复成功${RESET}"
+                    echo -e "   ${GREEN}✅ Служба Snell успешно восстановлена${RESET}"
                     echo "$fixed_process" | sed 's/^/   FIX: /'
                     echo "$fixed_netstat" | sed 's/^/   PORT: /'
                 elif [ -n "$fixed_process" ]; then
-                    echo -e "   ${YELLOW}⚠️  进程已启动但端口仍未监听${RESET}"
+                    echo -e "   ${YELLOW}⚠️  Процесс запущен, но порт всё ещё не прослушивается${RESET}"
                     echo "$fixed_process" | sed 's/^/   FIX: /'
                 else
-                    echo -e "   ${RED}❌ 手动启动失败，建议重建容器${RESET}"
+                    echo -e "   ${RED}❌ Ручной запуск не удался, рекомендуется пересоздать контейнер${RESET}"
                     
-                    # 显示启动错误信息
-                    echo -e "   ${CYAN}检查启动错误...${RESET}"
+                    # Отображение ошибки запуска
+                    echo -e "   ${CYAN}Проверка ошибок запуска...${RESET}"
                     local start_error=$(docker exec "${CONTAINER_NAME}" sh -c "cd /app && timeout 5s ./snell-server -c /etc/snell/snell-server.conf" 2>&1 || echo "")
                     if [ -n "$start_error" ]; then
-                        echo "   启动错误: $start_error" | head -3
+                        echo "   Ошибка запуска: $start_error" | head -3
                     fi
                 fi
             else
-                echo -e "   ${RED}❌ 启动命令执行失败${RESET}"
+                echo -e "   ${RED}❌ Не удалось выполнить команду запуска${RESET}"
             fi
         fi
     fi
     echo ""
     
-    # 6. 生成客户端配置
-    echo -e "${CYAN}6️⃣  客户端配置检查...${RESET}"
+    # 6. Генерация клиентской конфигурации
+    echo -e "${CYAN}6️⃣  Проверка конфигурации клиента...${RESET}"
     if [ -n "$server_ip" ]; then
-        echo -e "   ${GREEN}Surge 配置:${RESET}"
+        echo -e "   ${GREEN}Конфигурация Surge:${RESET}"
         if [ "$version_choice" = "v6" ]; then
             echo "   MySnell = snell, $server_ip, $port, psk=$psk, version=6, mode=$(get_snell_mode), reuse=true, tfo=true"
         elif [ "$version_choice" = "v5" ]; then
@@ -1475,13 +1475,13 @@ network_diagnosis() {
             echo "   MySnell = snell, $server_ip, $port, psk=$psk, version=4, reuse=true, tfo=true"
         fi
         echo ""
-        echo -e "   ${YELLOW}确保客户端配置与上述配置完全一致${RESET}"
+        echo -e "   ${YELLOW}Убедитесь, что конфигурация на клиенте полностью совпадает с указанной выше${RESET}"
     fi
     echo ""
     
-    # 7. 自动修复建议和操作
-    echo -e "${CYAN}🔧 自动修复选项:${RESET}"
-    echo -e "${YELLOW}检测到的问题:${RESET}"
+    # 7. Рекомендации и действия по автоматическому исправлению
+    echo -e "${CYAN}🔧 Варианты автоматического исправления:${RESET}"
+    echo -e "${YELLOW}Обнаруженные проблемы:${RESET}"
     
     local issues_found=0
     local port_mapping=$(docker port "${CONTAINER_NAME}" 2>/dev/null)
@@ -1489,38 +1489,38 @@ network_diagnosis() {
     local container_listening=$(docker exec "${CONTAINER_NAME}" netstat -tln 2>/dev/null | grep ":$port " || echo "")
     
     if [ -z "$port_mapping" ]; then
-        echo "   • Docker 端口映射缺失"
+        echo "   • Отсутствует проброс портов Docker"
         issues_found=$((issues_found + 1))
     fi
     
     if [ -z "$snell_process" ]; then
-        echo "   • Snell 进程未运行"
+        echo "   • Процесс Snell не запущен"
         issues_found=$((issues_found + 1))
     elif echo "$snell_process" | grep -q "\[snell-server\]"; then
-        echo "   • Snell 进程可能是僵尸进程"
+        echo "   • Процесс Snell может быть зомби-процессом"
         issues_found=$((issues_found + 1))
     fi
     
     if [ -z "$container_listening" ]; then
-        echo "   • 容器内端口未监听"
+        echo "   • Порт внутри контейнера не прослушивается"
         issues_found=$((issues_found + 1))
     fi
     
     if [ "$issues_found" -gt 0 ]; then
         echo ""
-        echo -e "${CYAN}修复选项:${RESET}"
-        echo -e "${YELLOW}1. 快速修复 (重启容器):${RESET}"
+        echo -e "${CYAN}Варианты исправления:${RESET}"
+        echo -e "${YELLOW}1. Быстрое исправление (перезапуск контейнера):${RESET}"
         echo "   docker restart ${CONTAINER_NAME}"
         echo ""
-        echo -e "${YELLOW}2. 重建容器 (推荐):${RESET}"
-        echo "   选择脚本主菜单的选项 1 重新安装"
+        echo -e "${YELLOW}2. Пересоздание контейнера (рекомендуется):${RESET}"
+        echo "   Выберите пункт 1 в главном меню скрипта для переустановки"
         echo ""
-        echo -e "${YELLOW}3. 手动修复命令:${RESET}"
-        echo "   # 停止当前容器"
+        echo -e "${YELLOW}3. Команды для ручного исправления:${RESET}"
+        echo "   # Остановка и удаление текущего контейнера"
         echo "   docker stop ${CONTAINER_NAME}"
         echo "   docker rm ${CONTAINER_NAME}"
         echo ""
-        echo "   # 重新创建容器"
+        echo "   # Повторное создание контейнера"
         echo "   docker run -d \\"
         echo "     --name ${CONTAINER_NAME} \\"
         echo "     --restart unless-stopped \\"
@@ -1529,107 +1529,107 @@ network_diagnosis() {
         echo "     ${IMAGE_NAME}:latest"
         echo ""
         
-        # 提供一键修复选项
-        echo -e "${GREEN}是否要执行自动修复? [y/N]:${RESET}"
+        # Опция автоматического исправления в один клик
+        echo -e "${GREEN}Выполнить автоматическое исправление? [y/N]:${RESET}"
         printf "   "
         read -r fix_choice
         if [ "$fix_choice" = "y" ] || [ "$fix_choice" = "Y" ]; then
-            echo -e "${CYAN}执行自动修复...${RESET}"
+            echo -e "${CYAN}Выполнение автоматического исправления...${RESET}"
             
-            # 停止并删除容器
+            # Остановка и удаление контейнера
             docker stop "${CONTAINER_NAME}" 2>/dev/null || true
             docker rm "${CONTAINER_NAME}" 2>/dev/null || true
             
-            # 重新创建容器（配置已内置于镜像）
+            # Повторное создание контейнера (конфигурация встроена в образ)
             if docker run -d \
                 --name "${CONTAINER_NAME}" \
                 --restart unless-stopped \
                 -p "${port}:${port}/tcp" \
                 -p "${port}:${port}/udp" \
                 "${IMAGE_NAME}:latest" 2>/dev/null; then
-                echo -e "   ${GREEN}✅ 容器重建成功${RESET}"
-                sleep 8  # 给更多时间启动
+                echo -e "   ${GREEN}✅ Контейнер успешно пересоздан${RESET}"
+                sleep 8  # Даём больше времени на запуск
                 
-                # 验证修复结果
-                echo -e "   ${CYAN}验证修复结果...${RESET}"
+                # Проверка результатов исправления
+                echo -e "   ${CYAN}Проверка результатов исправления...${RESET}"
                 if container_running; then
                     local new_port_mapping=$(docker port "${CONTAINER_NAME}" 2>/dev/null)
                     if [ -n "$new_port_mapping" ]; then
-                        echo -e "   ${GREEN}✅ 端口映射已恢复: $new_port_mapping${RESET}"
+                        echo -e "   ${GREEN}✅ Проброс портов восстановлен: $new_port_mapping${RESET}"
                         
-                        # 等待服务启动并检查
+                        # Ожидание запуска службы и проверка
                         sleep 5
                         local new_snell_process=$(docker exec "${CONTAINER_NAME}" ps aux 2>/dev/null | grep -v grep | grep snell || echo "")
                         local new_port_listen=$(docker exec "${CONTAINER_NAME}" netstat -tln 2>/dev/null | grep ":$port " || echo "")
                         
                         if [ -n "$new_snell_process" ] && [ -n "$new_port_listen" ]; then
-                            echo -e "   ${GREEN}✅ Snell 服务已启动并监听端口${RESET}"
+                            echo -e "   ${GREEN}✅ Служба Snell запущена и прослушивает порт${RESET}"
                             echo "$new_snell_process" | sed 's/^/   PROCESS: /'
                             echo "$new_port_listen" | sed 's/^/   LISTEN: /'
-                            echo -e "   ${GREEN}🎉 修复成功！请重新测试连接${RESET}"
+                            echo -e "   ${GREEN}🎉 Исправление выполнено успешно! Проверьте подключение ещё раз${RESET}"
                         elif [ -n "$new_snell_process" ]; then
-                            echo -e "   ${YELLOW}⚠️  服务已启动但端口未监听${RESET}"
+                            echo -e "   ${YELLOW}⚠️  Служба запущена, но порт не прослушивается${RESET}"
                             echo "$new_snell_process" | sed 's/^/   PROCESS: /'
-                            echo -e "   ${YELLOW}可能需要等待更长时间或重新安装${RESET}"
+                            echo -e "   ${YELLOW}Возможно, нужно подождать дольше или выполнить переустановку${RESET}"
                         else
-                            echo -e "   ${YELLOW}⚠️  容器已启动，但 Snell 服务可能还在启动中...${RESET}"
-                            echo -e "   ${YELLOW}请等待 10-20 秒后重新运行诊断${RESET}"
+                            echo -e "   ${YELLOW}⚠️  Контейнер запущен, но служба Snell, возможно, всё ещё запускается...${RESET}"
+                            echo -e "   ${YELLOW}Подождите 10–20 секунд и запустите диагностику заново${RESET}"
                         fi
                     else
-                        echo -e "   ${RED}❌ 端口映射仍然有问题${RESET}"
-                        echo -e "   ${YELLOW}请检查容器状态:${RESET}"
+                        echo -e "   ${RED}❌ Проблема с пробросом портов сохраняется${RESET}"
+                        echo -e "   ${YELLOW}Проверьте состояние контейнера:${RESET}"
                         docker ps --filter "name=${CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | sed 's/^/   /'
                     fi
                 else
-                    echo -e "   ${RED}❌ 容器启动失败${RESET}"
-                    echo -e "   ${CYAN}容器启动日志:${RESET}"
+                    echo -e "   ${RED}❌ Не удалось запустить контейнер${RESET}"
+                    echo -e "   ${CYAN}Логи запуска контейнера:${RESET}"
                     docker logs --tail 10 "${CONTAINER_NAME}" 2>&1 | sed 's/^/   /'
                 fi
             else
-                echo -e "   ${RED}❌ 容器重建失败${RESET}"
-                echo -e "   ${YELLOW}可能是镜像问题，建议选择选项1重新安装${RESET}"
+                echo -e "   ${RED}❌ Не удалось пересоздать контейнер${RESET}"
+                echo -e "   ${YELLOW}Возможна проблема с образом, рекомендуется выбрать пункт 1 для переустановки${RESET}"
             fi
         fi
     else
-        echo "   ${GREEN}✅ 未发现明显问题${RESET}"
-        echo "   ${YELLOW}如果仍无法连接，可能是 VPS 提供商防火墙限制${RESET}"
+        echo "   ${GREEN}✅ Явных проблем не обнаружено${RESET}"
+        echo "   ${YELLOW}Если подключиться всё равно не удаётся, возможны ограничения файрвола на стороне VPS-провайдера${RESET}"
     fi
     echo ""
     
-    echo -e "${CYAN}🔧 常见问题解决方案:${RESET}"
-    echo -e "${CYAN}🔧 通用解决方案:${RESET}"
-    echo -e "${YELLOW}1. VPS 提供商防火墙:${RESET}"
-    echo "   ▸ 登录 VPS 控制面板，开放端口 $port"
-    echo "   ▸ 阿里云/腾讯云等需要在安全组中开放端口"
+    echo -e "${CYAN}🔧 Решения частых проблем:${RESET}"
+    echo -e "${CYAN}🔧 Общие решения:${RESET}"
+    echo -e "${YELLOW}1. Файрвол VPS-провайдера:${RESET}"
+    echo "   ▸ Войдите в панель управления VPS и откройте порт $port"
+    echo "   ▸ В Alibaba Cloud / Tencent Cloud / AWS и др. необходимо открыть порт в группе безопасности (Security Group)"
     echo ""
-    echo -e "${YELLOW}2. 网络运营商限制:${RESET}"
-    echo "   ▸ 某些端口可能被运营商封禁"
-    echo "   ▸ 尝试更换端口: docker stop snell-server && 重新安装"
+    echo -e "${YELLOW}2. Ограничения интернет-провайдера:${RESET}"
+    echo "   ▸ Некоторые порты могут блокироваться провайдером"
+    echo "   ▸ Попробуйте сменить порт: docker stop snell-server && переустановите"
     echo ""
-    echo -e "${YELLOW}3. 容器重启:${RESET}"
+    echo -e "${YELLOW}3. Перезапуск контейнера:${RESET}"
     echo "   ▸ docker restart ${CONTAINER_NAME}"
     echo "   ▸ docker logs -f ${CONTAINER_NAME}"
     echo ""
-    echo -e "${YELLOW}4. 重新开放端口:${RESET}"
+    echo -e "${YELLOW}4. Повторное открытие порта:${RESET}"
     echo "   ▸ iptables -I INPUT -p tcp --dport $port -j ACCEPT"
-    echo "   ▸ 检查 /etc/iptables/rules.v4 是否保存规则"
+    echo "   ▸ Проверьте, сохранены ли правила в /etc/iptables/rules.v4"
     echo ""
     echo -e "${CYAN}===========================================${RESET}"
-    echo -e "${GREEN}✅ 诊断完成！${RESET}"
+    echo -e "${GREEN}✅ Диагностика завершена!${RESET}"
 }
 
-# --- 辅助函数 ---
+# --- Вспомогательные функции ---
 
 configure_firewall() {
-    echo -e "${CYAN}配置防火墙...${RESET}"
-    # TCP 与 UDP（Snell 的 UDP 转发要 UDP）；firewalld / ufw / iptables / nftables 都认
+    echo -e "${CYAN}Настройка файрвола...${RESET}"
+    # TCP и UDP (для UDP-пересылки в Snell нужен UDP); поддерживаются firewalld / ufw / iptables / nftables
     open_port "$SNELL_PORT"
-    echo -e "${YELLOW}请确保您的 VPS 提供商防火墙也开放了端口 ${SNELL_PORT}${RESET}"
+    echo -e "${YELLOW}Убедитесь, что порт ${SNELL_PORT} также открыт в файрволе панели управления вашего VPS-провайдера${RESET}"
 }
 
 show_information() {
     if [ ! -f "/etc/snell-docker/snell-server.conf" ]; then
-        echo -e "${RED}未找到配置文件。${RESET}"
+        echo -e "${RED}Файл конфигурации не найден.${RESET}"
         return
     fi
     
@@ -1646,18 +1646,18 @@ show_information() {
         fi
     fi
     
-    # 获取服务器 IP
+    # Получение IP-адресов сервера
     local ipv4_addr=$(curl -s4 --connect-timeout 5 https://api.ipify.org 2>/dev/null)
     local ipv6_addr=$(curl -s6 --connect-timeout 5 https://api64.ipify.org 2>/dev/null)
     
     clear
     echo -e "${BLUE}============================================${RESET}"
-    echo -e "${GREEN}🐳 Snell Docker 配置信息:${RESET}"
+    echo -e "${GREEN}🐳 Информация о конфигурации Snell Docker:${RESET}"
     echo -e "${BLUE}============================================${RESET}"
 
     if [ -n "$ipv4_addr" ]; then
         local ip_country_ipv4=$(get_ip_country "${ipv4_addr}")
-        echo -e "${GREEN}--- IPv4 Surge 配置 (Snell ${version_choice}) ---${RESET}"
+        echo -e "${GREEN}--- Конфигурация Surge IPv4 (Snell ${version_choice}) ---${RESET}"
         if [ "$version_choice" = "v6" ]; then
             echo -e "${GREEN}${ip_country_ipv4} = snell, ${ipv4_addr}, ${port}, psk=${psk}, version=6, mode=$(get_snell_mode), reuse=true, tfo=true${RESET}"
         elif [ "$version_choice" = "v5" ]; then
@@ -1670,7 +1670,7 @@ show_information() {
 
     if [ -n "$ipv6_addr" ]; then
         local ip_country_ipv6=$(get_ip_country "${ipv6_addr}")
-        echo -e "\n${GREEN}--- IPv6 Surge 配置 (Snell ${version_choice}) ---${RESET}"
+        echo -e "\n${GREEN}--- Конфигурация Surge IPv6 (Snell ${version_choice}) ---${RESET}"
         if [ "$version_choice" = "v6" ]; then
             echo -e "${GREEN}${ip_country_ipv6} = snell, ${ipv6_addr}, ${port}, psk=${psk}, version=6, mode=$(get_snell_mode), reuse=true, tfo=true${RESET}"
         elif [ "$version_choice" = "v5" ]; then
@@ -1682,86 +1682,86 @@ show_information() {
     fi
 
     echo ""
-    echo -e "${YELLOW}服务器端口: ${RESET}${port}"
-    echo -e "${YELLOW}PSK 密钥: ${RESET}${psk}"
-    echo -e "${YELLOW}容器名称: ${RESET}${CONTAINER_NAME}"
-    echo -e "${YELLOW}镜像名称: ${RESET}${IMAGE_NAME}:latest"
-    echo -e "\n${YELLOW}配置文件: ${RESET}/etc/snell-docker/snell-server.conf"
-    echo -e "\n${CYAN}Docker 管理命令:${RESET}"
-    echo -e "查看日志: ${YELLOW}docker logs ${CONTAINER_NAME}${RESET}"
-    echo -e "进入容器: ${YELLOW}docker exec -it ${CONTAINER_NAME} sh${RESET}"
-    echo -e "重启容器: ${YELLOW}docker restart ${CONTAINER_NAME}${RESET}"
+    echo -e "${YELLOW}Порт сервера: ${RESET}${port}"
+    echo -e "${YELLOW}Ключ PSK: ${RESET}${psk}"
+    echo -e "${YELLOW}Имя контейнера: ${RESET}${CONTAINER_NAME}"
+    echo -e "${YELLOW}Имя образа: ${RESET}${IMAGE_NAME}:latest"
+    echo -e "\n${YELLOW}Файл конфигурации: ${RESET}/etc/snell-docker/snell-server.conf"
+    echo -e "\n${CYAN}Команды управления Docker:${RESET}"
+    echo -e "Просмотр логов: ${YELLOW}docker logs ${CONTAINER_NAME}${RESET}"
+    echo -e "Вход в контейнер: ${YELLOW}docker exec -it ${CONTAINER_NAME} sh${RESET}"
+    echo -e "Перезапуск контейнера: ${YELLOW}docker restart ${CONTAINER_NAME}${RESET}"
     echo -e "${BLUE}============================================${RESET}"
 }
 
-# --- 主菜单 ---
+# --- Главное меню ---
 
 show_menu() {
     clear
     echo -e "${CYAN}============================================${RESET}"
-    echo -e "${CYAN}   🐳 Snell Docker 管理脚本 v${current_version}${RESET}"
+    echo -e "${CYAN}   🐳 Скрипт управления Snell Docker v${current_version}${RESET}"
     echo -e "${CYAN}============================================${RESET}"
     
-    # 检查容器状态
+    # Проверка статуса контейнера
     if container_exists; then
         if container_running; then
-            echo -e "服务状态: ${GREEN}运行中 🟢${RESET}"
+            echo -e "Статус службы: ${GREEN}Работает 🟢${RESET}"
         else
-            echo -e "服务状态: ${RED}已停止 🔴${RESET}"
+            echo -e "Статус службы: ${RED}Остановлена 🔴${RESET}"
         fi
     else
-        echo -e "服务状态: ${YELLOW}未安装 ⚪${RESET}"
+        echo -e "Статус службы: ${YELLOW}Не установлена ⚪${RESET}"
     fi
     
     echo -e "${CYAN}--------------------------------------------${RESET}"
-    echo -e "${GREEN}1.${RESET} 🚀 安装 Snell (Docker)"
-    echo -e "${GREEN}2.${RESET} 🗑️  卸载 Snell"
-    echo -e "${GREEN}3.${RESET} 🔄 重启服务"
-    echo -e "${GREEN}4.${RESET} 📋 查看配置信息"
-    echo -e "${GREEN}5.${RESET} 📊 查看详细状态"
-    echo -e "${GREEN}6.${RESET} 网络连接诊断"
-    echo -e "${GREEN}7.${RESET} Docker 常用命令"
-    echo -e "${GREEN}0.${RESET} 🚪 退出脚本"
+    echo -e "${GREEN}1.${RESET} 🚀 Установить Snell (Docker)"
+    echo -e "${GREEN}2.${RESET} 🗑️  Удалить Snell"
+    echo -e "${GREEN}3.${RESET} 🔄 Перезапустить службу"
+    echo -e "${GREEN}4.${RESET} 📋 Просмотреть конфигурацию"
+    echo -e "${GREEN}5.${RESET} 📊 Просмотреть подробный статус"
+    echo -e "${GREEN}6.${RESET} Диагностика сетевого подключения"
+    echo -e "${GREEN}7.${RESET} Частые команды Docker"
+    echo -e "${GREEN}0.${RESET} 🚪 Выйти из скрипта"
     echo -e "${CYAN}============================================${RESET}"
-    printf "请输入选项 [0-7]: "
+    printf "Введите вариант [0-7]: "
     read -r num
 }
 
 show_docker_commands() {
     clear
     echo -e "${CYAN}============================================${RESET}"
-    echo -e "${CYAN}       🐳 Docker 常用管理命令${RESET}"
+    echo -e "${CYAN}       🐳 Частые команды управления Docker${RESET}"
     echo -e "${CYAN}============================================${RESET}"
-    echo -e "${GREEN}查看容器状态:${RESET}"
+    echo -e "${GREEN}Просмотр статуса контейнера:${RESET}"
     echo "  docker ps -a --filter \"name=${CONTAINER_NAME}\""
     echo ""
-    echo -e "${GREEN}查看实时日志:${RESET}"
+    echo -e "${GREEN}Просмотр логов в реальном времени:${RESET}"
     echo "  docker logs -f ${CONTAINER_NAME}"
     echo ""
-    echo -e "${GREEN}进入容器shell:${RESET}"
+    echo -e "${GREEN}Вход в оболочку (shell) контейнера:${RESET}"
     echo "  docker exec -it ${CONTAINER_NAME} sh"
     echo ""
-    echo -e "${GREEN}容器资源监控:${RESET}"
+    echo -e "${GREEN}Мониторинг ресурсов контейнера:${RESET}"
     echo "  docker stats ${CONTAINER_NAME}"
     echo ""
-    echo -e "${GREEN}手动重启容器:${RESET}"
+    echo -e "${GREEN}Ручной перезапуск контейнера:${RESET}"
     echo "  docker restart ${CONTAINER_NAME}"
     echo ""
-    echo -e "${GREEN}手动停止/启动:${RESET}"
+    echo -e "${GREEN}Ручная остановка/запуск:${RESET}"
     echo "  docker stop ${CONTAINER_NAME}"
     echo "  docker start ${CONTAINER_NAME}"
     echo ""
-    echo -e "${GREEN}查看镜像:${RESET}"
+    echo -e "${GREEN}Просмотр образов:${RESET}"
     echo "  docker images | grep ${IMAGE_NAME}"
     echo ""
-    echo -e "${GREEN}容器端口映射:${RESET}"
+    echo -e "${GREEN}Проброс портов контейнера:${RESET}"
     echo "  docker port ${CONTAINER_NAME}"
     echo -e "${CYAN}============================================${RESET}"
-    printf "${CYAN}按任意键返回主菜单...${RESET}"
+    printf "${CYAN}Нажмите Enter для возврата в главное меню...${RESET}"
     read -r dummy
 }
 
-# --- 主程序 ---
+# --- Основная программа ---
 
 main() {
     while true; do
@@ -1774,16 +1774,16 @@ main() {
             5) check_status ;;
             6) network_diagnosis ;;
             7) show_docker_commands ;;
-            0) echo -e "${GREEN}感谢使用，再见！🎉${RESET}"; exit 0 ;;
-            *) echo -e "${RED}请输入正确的选项 [0-7]${RESET}";;
+            0) echo -e "${GREEN}Спасибо за использование, до свидания! 🎉${RESET}"; exit 0 ;;
+            *) echo -e "${RED}Пожалуйста, введите корректный вариант [0-7]${RESET}";;
         esac
         if [ "$num" != "7" ]; then
             echo ""
-            printf "${CYAN}按任意键返回主菜单...${RESET}"
+            printf "${CYAN}Нажмите Enter для возврата в главное меню...${RESET}"
             read -r dummy
         fi
     done
 }
 
-# 启动主程序
+# Запуск основной программы
 main
