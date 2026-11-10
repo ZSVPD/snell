@@ -1,14 +1,14 @@
 #!/bin/bash
-# 此文件由 tools/build.sh 从 src/bbr.sh 和 src/lib 生成：请修改 src/ 下的文件后重新生成。
+# Этот файл сгенерирован скриптом tools/build.sh из src/bbr.sh и src/lib: пожалуйста, вносите изменения в файлы внутри src/ и генерируйте заново.
 # =========================================
-# 作者: jinqians
-# 网站：jinqians.com
-# 描述: BBR 管理：启用内核自带的 BBR，或在 Debian / Ubuntu 上换 XanMod 内核（BBR v3）
+# Автор: jinqians
+# Сайт: jinqians.com
+# Описание: Управление BBR: включение встроенного в ядро BBR или установка ядра XanMod (BBR v3) на Debian / Ubuntu
 # =========================================
 
 # ── lib/common.sh ─────────────────────────────────────────────────────────────
-# 所有脚本共用：颜色、root 检查、系统与包管理器、脚本的发布地址。
-# 只用 POSIX sh 的写法：Alpine / Docker 版脚本在 ash、dash 下也要能用。
+# Общее для всех скриптов: цвета, проверка root, определение ОС и пакетного менеджера, адреса публикации скриптов.
+# Используется только синтаксис POSIX sh: версии скриптов для Alpine / Docker должны работать в ash и dash.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -16,33 +16,33 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# 脚本的发布地址。短域名（*.jinqians.com）由 Cloudflare 重定向到仓库里的文件：
-# snell / snell-centos / snell-alpine → 根目录，menu / snell-docker / install → scripts/。
-# 菜单里调用的子脚本从 SNELL_RAW_BASE 下的 scripts/、docker/ 取。
-# 脚本自身的更新与管理命令走短域名，运行才会被统计到。
-# 可以用同名环境变量换成镜像地址（测试时指向本地的文件）。
+# Адреса публикации скриптов. Короткие домены (*.jinqians.com) перенаправляются через Cloudflare на файлы в репозитории:
+# snell / snell-centos / snell-alpine → корневая директория, menu / snell-docker / install → scripts/.
+# Подскрипты, вызываемые из меню, берутся из папок scripts/ и docker/ внутри SNELL_RAW_BASE.
+# Обновление самого скрипта и команды управления идут через короткие домены для учета статистики запусков.
+# Можно заменить на зеркало с помощью одноименных переменных окружения (при тестировании можно указать локальные файлы).
 SNELL_RAW_BASE="${SNELL_RAW_BASE:-https://raw.githubusercontent.com/jinqians/snell/main}"
-SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh（Debian / Ubuntu / CentOS / RHEL）
+SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh (Debian / Ubuntu / CentOS / RHEL)
 SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://snell-alpine.jinqians.com}" # snell-alpine.sh
 SNELL_DOCKER_SCRIPT_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}" # snell-docker.sh
 SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://menu.jinqians.com}"             # menu.sh
 
-# 检查是否以 root 权限运行
+# Проверка запуска с правами root
 check_root() {
     if [ "$(id -u)" != "0" ]; then
-        printf '%b\n' "${RED}请以 root 权限运行此脚本${RESET}"
+        printf '%b\n' "${RED}Пожалуйста, запустите этот скрипт с правами root${RESET}"
         exit 1
     fi
 }
 
-# 识别系统：OS_FAMILY = debian | rhel | alpine | unknown，PKG = apt | dnf | yum | apk
+# Определение ОС: OS_FAMILY = debian | rhel | alpine | unknown, PKG = apt | dnf | yum | apk
 OS_FAMILY=""
 PKG=""
 detect_os() {
     [ -n "$OS_FAMILY" ] && return 0
     OS_FAMILY="unknown"
     if [ -f /etc/os-release ]; then
-        # 在子 shell 里读，os-release 的 NAME / VERSION 等变量不会覆盖脚本自己的
+        # Чтение в подоболочке (subshell), чтобы переменные NAME / VERSION из os-release не перезаписали переменные скрипта
         case " $(. /etc/os-release; echo "$ID $ID_LIKE" | tr '[:upper:]' '[:lower:]') " in
             *" debian "*|*" ubuntu "*) OS_FAMILY="debian" ;;
             *" rhel "*|*" centos "*|*" fedora "*|*" rocky "*|*" almalinux "*) OS_FAMILY="rhel" ;;
@@ -58,16 +58,16 @@ detect_os() {
     fi
 }
 
-# 等待其他 apt 进程完成
+# Ожидание завершения других процессов apt
 wait_for_apt() {
     command -v fuser >/dev/null 2>&1 || return 0
     while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
-        printf '%b\n' "${YELLOW}等待其他 apt 进程完成...${RESET}"
+        printf '%b\n' "${YELLOW}Ожидание завершения других процессов apt...${RESET}"
         sleep 2
     done
 }
 
-# 用系统的包管理器安装软件包
+# Установка пакетов с помощью системного пакетного менеджера
 pkg_install() {
     detect_os
     case "$PKG" in
@@ -80,13 +80,13 @@ pkg_install() {
         yum) yum install -y "$@" ;;
         apk) apk add --no-cache "$@" ;;
         *)
-            printf '%b\n' "${RED}未识别的包管理器，请手动安装：$*${RESET}"
+            printf '%b\n' "${RED}Неизвестный пакетный менеджер, пожалуйста, установите вручную: $*${RESET}"
             return 1
             ;;
     esac
 }
 
-# 提供某个命令的软件包名（各发行版不同的在这里对上）
+# Определение имени пакета для конкретной команды (здесь сопоставляются различия между дистрибутивами)
 pkg_for_cmd() {
     detect_os
     case "$1" in
@@ -100,45 +100,45 @@ pkg_for_cmd() {
     esac
 }
 
-# 缺哪个命令就装哪个包；装不上返回非 0，由调用方决定是否退出
+# Установка пакетов для отсутствующих команд; если установить не удалось — возврат ненулевого кода (вызывающая сторона решает, выходить ли)
 ensure_cmds() {
     _ec_missing=""
     for _ec_cmd in "$@"; do
         command -v "$_ec_cmd" >/dev/null 2>&1 || _ec_missing="${_ec_missing} $(pkg_for_cmd "$_ec_cmd")"
     done
     [ -z "$_ec_missing" ] && return 0
-    printf '%b\n' "${YELLOW}正在安装依赖：${_ec_missing# }${RESET}"
-    # shellcheck disable=SC2086 # 包名按空格分开传
+    printf '%b\n' "${YELLOW}Установка зависимостей: ${_ec_missing# }${RESET}"
+    # shellcheck disable=SC2086 # Имена пакетов передаются через пробел
     pkg_install $_ec_missing || return 1
     for _ec_cmd in "$@"; do
         if ! command -v "$_ec_cmd" >/dev/null 2>&1; then
-            printf '%b\n' "${RED}安装后仍找不到 ${_ec_cmd}，请手动安装 $(pkg_for_cmd "$_ec_cmd")${RESET}"
+            printf '%b\n' "${RED}После установки команда ${_ec_cmd} по-прежнему не найдена, установите вручную: $(pkg_for_cmd "$_ec_cmd")${RESET}"
             return 1
         fi
     done
 }
 
-# 下载远程脚本并做完整性校验：传输失败即停、非空、语法检查。
-# 只能保证传输完整；仓库本身被篡改要靠发布签名来防。
+# Скачивание удаленного скрипта и проверка целостности: остановка при ошибке передачи, проверка на пустоту и проверка синтаксиса.
+# Гарантирует только целостность передачи; от компрометации самого репозитория должна защищать подпись релиза.
 fetch_verified_script() {   # <url> <dest>
     if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 "$1" -o "$2"; then
-        printf '%b\n' "${RED}下载失败: $1${RESET}" >&2
+        printf '%b\n' "${RED}Ошибка скачивания: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
     if [ ! -s "$2" ]; then
-        printf '%b\n' "${RED}下载的文件为空，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный файл пуст и был удален: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
-    # bash 能解析 sh 写法；没有 bash 的系统（Alpine）用 sh 检查
+    # bash может парсить синтаксис sh; на системах без bash (например, Alpine) для проверки используется sh
     if command -v bash >/dev/null 2>&1; then
         _fv_shell=bash
     else
         _fv_shell=sh
     fi
     if ! "$_fv_shell" -n "$2" 2>/dev/null; then
-        printf '%b\n' "${RED}下载的脚本未通过语法检查，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный скрипт не прошел проверку синтаксиса и был удален: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
@@ -154,7 +154,7 @@ XANMOD_KEY_URL="https://dl.xanmod.org/archive.key"
 XANMOD_REPO="http://deb.xanmod.org"
 XANMOD_KEYRING="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
 XANMOD_LIST="/etc/apt/sources.list.d/xanmod-release.list"
-# 测试用：BBR_APT_SIMULATE=1 只模拟安装内核（apt-get -s）；BBR_CPUINFO 换一份 cpuinfo
+# Для тестирования: BBR_APT_SIMULATE=1 только симулирует установку ядра (apt-get -s); BBR_CPUINFO подменяет файл cpuinfo
 CPUINFO="${BBR_CPUINFO:-/proc/cpuinfo}"
 
 current_cc()    { sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null; }
@@ -162,14 +162,14 @@ current_qdisc() { sysctl -n net.core.default_qdisc 2>/dev/null; }
 available_cc()  { cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; }
 bbr_available() { available_cc | grep -qw bbr; }
 
-# 内核版本不低于 <主> <次>
+# Проверка, что версия ядра не ниже <мажорная> <минорная>
 kernel_at_least() {
     local v maj min
     v=$(uname -r); maj=${v%%.*}; v=${v#*.}; min=${v%%[!0-9]*}
     [ "$maj" -gt "$1" ] || { [ "$maj" -eq "$1" ] && [ "${min:-0}" -ge "$2" ]; }
 }
 
-# 跑在容器或 OpenVZ 里：内核是宿主机的，这里换不了内核，也未必改得了内核参数
+# Проверка запуска в контейнере или OpenVZ: там используется ядро хоста, заменить его нельзя и не всегда можно менять параметры sysctl
 in_container() {
     if command -v systemd-detect-virt >/dev/null 2>&1; then
         systemd-detect-virt -c -q && return 0
@@ -177,11 +177,11 @@ in_container() {
         return 1
     fi
     [ -f /.dockerenv ] || [ -f /run/.containerenv ] && return 0
-    grep -qa 'container=' /proc/1/environ 2>/dev/null && return 0   # LXC 等
-    [ -d /proc/vz ] && [ ! -d /proc/bc ]                              # OpenVZ（宿主机上有 /proc/bc）
+    grep -qa 'container=' /proc/1/environ 2>/dev/null && return 0   # LXC и др.
+    [ -d /proc/vz ] && [ ! -d /proc/bc ]                              # OpenVZ (на хосте есть /proc/bc)
 }
 
-# 开了安全启动（Secure Boot）的机器只认签过名的内核；XanMod 没签名，装上就开不了机
+# Машины с включенным Secure Boot принимают только подписанные ядра; ядро XanMod не подписано — после установки система не загрузится
 secure_boot_on() {
     local f
     for f in /sys/firmware/efi/efivars/SecureBoot-*; do
@@ -193,18 +193,18 @@ secure_boot_on() {
 
 xanmod_suite_ok() { [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${XANMOD_REPO}/dists/$1/Release")" = "200" ]; }
 
-# 旧版脚本加的 XanMod 软件源是 releases，这个源已经没有了（404），apt-get update 会一直报错：
-# 装上了 XanMod 的改成本系统版本的源（照常收到内核更新），没装上的删掉
+# Старая версия скрипта добавляла ветку репозитория XanMod «releases», которой больше нет (404), из-за чего apt-get update постоянно выдает ошибку:
+# если XanMod уже установлен — меняем на кодовое имя текущей системы (обновления ядра продолжат приходить), если не установлен — удаляем файл репозитория
 fix_legacy_xanmod_repo() {
     [ -f "$XANMOD_LIST" ] && grep -q '^deb .*deb\.xanmod\.org releases' "$XANMOD_LIST" || return 0
     local codename
     codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
     if xanmod_installed && [ -n "$codename" ] && command -v curl >/dev/null 2>&1 && xanmod_suite_ok "$codename"; then
         sed -i "s#deb\.xanmod\.org releases#deb.xanmod.org ${codename}#" "$XANMOD_LIST"
-        echo -e "${YELLOW}旧版脚本加的 XanMod 软件源（releases）已经没有了，改成了 ${codename}，内核照常更新。${RESET}"
+        echo -e "${YELLOW}Добавленный старой версией скрипта репозиторий XanMod (releases) больше не существует. Он изменен на ${codename}, ядро будет обновляться как обычно.${RESET}"
     else
         rm -f "$XANMOD_LIST"
-        echo -e "${YELLOW}旧版脚本加的 XanMod 软件源（releases）已经没有了，apt-get update 会因它报错，已删除。${RESET}"
+        echo -e "${YELLOW}Добавленный старой версией скрипта репозиторий XanMod (releases) больше не существует. Он вызывал ошибки при apt-get update и был удален.${RESET}"
     fi
 }
 
@@ -212,45 +212,45 @@ xanmod_running() { uname -r | grep -qi xanmod; }
 xanmod_installed() { dpkg-query -W -f='${Status} ${Package}\n' 'linux-image-*xanmod*' 2>/dev/null | grep -q '^install ok installed'; }
 
 show_status() {
-    local mine="无" kern
-    [ -f "$BBR_SYSCTL" ] && mine="已写入 ${BBR_SYSCTL}"
+    local mine="нет" kern
+    [ -f "$BBR_SYSCTL" ] && mine="записаны в ${BBR_SYSCTL}"
     kern=$(uname -r)
-    if xanmod_running; then kern="${kern}（XanMod）"
-    elif xanmod_installed; then kern="${kern}（已装 XanMod，重启后生效）"
+    if xanmod_running; then kern="${kern} (XanMod)"
+    elif xanmod_installed; then kern="${kern} (XanMod установлен, вступит в силу после перезагрузки)"
     fi
-    echo -e "  内核        ${kern}"
-    # 容器里看不到默认队列（只在宿主机的网络命名空间里有）
-    local q; q=$(current_qdisc); q=${q:+   默认队列 $q}
+    echo -e "  Ядро                ${kern}"
+    # В контейнере не видно очереди по умолчанию (она существует только в сетевом пространстве имен хоста)
+    local q; q=$(current_qdisc); q=${q:+   Очередь по умолчанию: $q}
     if [ "$(current_cc)" = "bbr" ]; then
-        echo -e "  拥塞控制    ${GREEN}bbr${RESET}${q}"
+        echo -e "  Контроль перегрузки ${GREEN}bbr${RESET}${q}"
     else
-        echo -e "  拥塞控制    ${YELLOW}$(current_cc)${RESET}${q}   可用：$(available_cc)"
+        echo -e "  Контроль перегрузки ${YELLOW}$(current_cc)${RESET}${q}   Доступно: $(available_cc)"
     fi
-    echo -e "  本脚本设置  ${mine}"
+    echo -e "  Настройки скрипта   ${mine}"
 }
 
 BBR_KEYS="net.core.default_qdisc net.ipv4.tcp_congestion_control net.core.rmem_max net.core.wmem_max net.ipv4.tcp_rmem net.ipv4.tcp_wmem"
 
-# 写入的只有 BBR 本身（fq + bbr）和适合长距离高带宽的收发缓冲区；不碰转发等别的系统设置。
-# 第一次写入时把这几项原来的值记在文件里（「# 原值」），「恢复默认」时还原；再写一次沿用记下的。
-# 旧版写的同名文件先备份（sysctl 只读 *.conf，备份不会生效）；那时的值是旧版设的，不记。
+# Записываются только параметры самого BBR (fq + bbr) и размеры буферов приема/передачи для высокоскоростных каналов с большой задержкой; форвардинг и другие системные настройки не затрагиваются.
+# При первой записи исходные значения этих параметров сохраняются в файле («# Исходное значение ») для возврата при выборе «Восстановить по умолчанию»; при повторной записи сохраненные значения переносятся.
+# Одноименный файл от старой версии скрипта предварительно бэкапится (sysctl читает только *.conf, поэтому бэкап не применится); значения из него были заданы старым скриптом, их не сохраняем.
 write_bbr_sysctl() {
     local orig="" k v
-    if [ -f "$BBR_SYSCTL" ] && grep -q '^# 原值 ' "$BBR_SYSCTL"; then
-        orig=$(grep '^# 原值 ' "$BBR_SYSCTL")
+    if [ -f "$BBR_SYSCTL" ] && grep -q '^# Исходное значение ' "$BBR_SYSCTL"; then
+        orig=$(grep '^# Исходное значение ' "$BBR_SYSCTL")
     elif [ -f "$BBR_SYSCTL" ]; then
         cp -a "$BBR_SYSCTL" "${BBR_SYSCTL}.bak_$(date +%Y%m%d_%H%M%S)"
     else
         for k in $BBR_KEYS; do
             v=$(sysctl -n "$k" 2>/dev/null | tr -s '\t ' '  ')
             [ -n "$v" ] && orig="${orig:+$orig
-}# 原值 ${k} = ${v}"
+}# Исходное значение ${k} = ${v}"
         done
     fi
-    # 精简的系统（比如容器镜像）可能没有这两个目录
+    # В минималистичных системах (например, образах контейнеров) этих двух директорий может не быть
     mkdir -p "$(dirname "$BBR_SYSCTL")" "$(dirname "$BBR_MODULES")"
     {
-        echo "# 由 snell.sh 的 BBR 管理写入。删除本文件并重启（或在菜单里选「恢复默认」）即恢复原来的设置。"
+        echo "# Записано управлением BBR из snell.sh. Удалите этот файл и перезагрузитесь (или выберите «Восстановить по умолчанию» в меню) для возврата прежних настроек."
         [ -n "$orig" ] && printf '%s\n' "$orig"
         cat <<'EOF'
 net.core.default_qdisc = fq
@@ -261,60 +261,60 @@ net.ipv4.tcp_rmem = 4096 131072 33554432
 net.ipv4.tcp_wmem = 4096 16384 33554432
 EOF
     } > "$BBR_SYSCTL"
-    # BBR 是模块时开机就加载它（编进内核的也无妨）
+    # Если BBR собран как модуль — загружать его при старте системы (если встроен в ядро — тоже не помешает)
     echo "tcp_bbr" > "$BBR_MODULES"
 }
 
-# 逐项应用；容器里有的参数改不了，说一声，不中断
+# Поочередное применение параметров; если в контейнере какие-то параметры изменить нельзя — выводим предупреждение без прерывания работы
 apply_bbr_sysctl() {
     local out
     if ! out=$(sysctl -p "$BBR_SYSCTL" 2>&1); then
-        echo -e "${YELLOW}有的参数没能生效（容器里改不了宿主机的设置）：${RESET}"
+        echo -e "${YELLOW}Некоторые параметры не удалось применить (в контейнере нельзя изменить настройки хоста):${RESET}"
         printf '%s\n' "$out" | grep -i -E 'error|denied|cannot|read-only|invalid' | sed 's/^/  /'
     fi
 }
 
-# 旧版脚本把整段参数写进了 /etc/sysctl.conf（2026-09 以前，整个文件被覆盖）或 99-snell-bbr.conf，
-# 顺带打开了 IP 转发和 route_localnet：前者让靠路由通告取 IPv6 地址的机器失去 IPv6，后者是安全隐患。
-# 99-snell-bbr.conf 是本脚本的文件，接下来整个换掉；/etc/sysctl.conf 是系统的，问过再改。
+# Старые версии скрипта записывали целый блок параметров в /etc/sysctl.conf (до сентября 2026 файл перезаписывался целиком) или в 99-snell-bbr.conf,
+# попутно включая IP-форвардинг и route_localnet: первое лишает IPv6-адреса машины, получающие его через Router Advertisements (RA), второе представляет угрозу безопасности.
+# 99-snell-bbr.conf — это файл данного скрипта, он будет полностью заменен; /etc/sysctl.conf — системный файл, перед изменением спрашиваем пользователя.
 cleanup_legacy_sysctl() {
     local f=/etc/sysctl.conf keys ans fixed=""
     keys='net\.ipv4\.conf\.all\.route_localnet|net\.ipv4\.ip_forward|net\.ipv4\.conf\.(all|default)\.forwarding|net\.ipv6\.conf\.(all|default)\.forwarding|net\.ipv4\.tcp_fack'
     if [ -f "$BBR_SYSCTL" ] && grep -q '^net\.ipv4\.conf\.all\.route_localnet = 1' "$BBR_SYSCTL"; then
-        echo -e "${YELLOW}旧版写的 ${BBR_SYSCTL} 打开了 IP 转发和 route_localnet，换成只有 BBR 的设置（原文件会备份）。${RESET}"
+        echo -e "${YELLOW}Созданный старой версией файл ${BBR_SYSCTL} включал IP-форвардинг и route_localnet. Заменяем только на настройки BBR (будет создана резервная копия исходного файла).${RESET}"
         fixed=1
     fi
     if [ -f "$f" ] && grep -q '^net\.ipv4\.conf\.all\.route_localnet = 1' "$f"; then
-        echo -e "${YELLOW}/etc/sysctl.conf 里有旧版 BBR 脚本写入的设置：打开了 IP 转发和 route_localnet。${RESET}"
-        echo -e "${YELLOW}route_localnet 有安全隐患；IPv6 转发会让靠路由通告取 IPv6 地址的机器失去 IPv6。${RESET}"
-        read -rp "把这几行注释掉吗？（原文件会备份）[Y/n]: " ans
+        echo -e "${YELLOW}В /etc/sysctl.conf обнаружены настройки от старой версии скрипта BBR: включены IP-форвардинг и route_localnet.${RESET}"
+        echo -e "${YELLOW}route_localnet несет угрозу безопасности; форвардинг IPv6 может привести к потере IPv6 на машинах, получающих адрес через Router Advertisements.${RESET}"
+        read -rp "Закомментировать эти строки? (будет создана резервная копия файла) [Y/n]: " ans
         case "$ans" in
             [nN]*) ;;
             *)
                 cp -a "$f" "${f}.bak_$(date +%Y%m%d_%H%M%S)"
-                sed -i -E "s/^(($keys)[[:space:]]*=.*)$/# 已由 BBR 管理注释：\1/" "$f"
+                sed -i -E "s/^(($keys)[[:space:]]*=.*)$/# Закомментировано управлением BBR: \1/" "$f"
                 fixed=1
                 ;;
         esac
     fi
     [ -n "$fixed" ] || return 0
     sysctl -w net.ipv4.conf.all.route_localnet=0 >/dev/null 2>&1 || true
-    echo -e "${GREEN}route_localnet 已立即关闭；转发的设置在下次重启后恢复默认（Docker 等需要转发的程序会自己打开）。${RESET}"
+    echo -e "${GREEN}route_localnet немедленно отключен; настройки форвардинга вернутся к значениям по умолчанию после следующей перезагрузки (программы вроде Docker, которым нужен форвардинг, включат его сами).${RESET}"
 }
 
 enable_bbr() {
     ensure_cmds sysctl modprobe || return 1
     if ! kernel_at_least 4 9; then
-        echo -e "${RED}内核 $(uname -r) 太旧：BBR 需要 4.9 及以上。Debian / Ubuntu 可以选「2」换 XanMod 内核。${RESET}"
+        echo -e "${RED}Ядро $(uname -r) слишком старое: для BBR требуется версия 4.9 или выше. На Debian / Ubuntu можно выбрать пункт «2» для установки ядра XanMod.${RESET}"
         return 1
     fi
     modprobe tcp_bbr 2>/dev/null || true
     if ! bbr_available; then
         if in_container; then
-            echo -e "${RED}BBR 没有加载（可用的拥塞控制：$(available_cc)）。这里是容器或 OpenVZ，模块只能由宿主机加载：${RESET}"
-            echo -e "${YELLOW}在宿主机上执行 modprobe tcp_bbr 后再试；OpenVZ 请联系服务商。${RESET}"
+            echo -e "${RED}BBR не загружен (доступные алгоритмы контроля перегрузки: $(available_cc)). Это контейнер или OpenVZ, модули могут загружаться только на хосте:${RESET}"
+            echo -e "${YELLOW}Выполните modprobe tcp_bbr на хост-машине и попробуйте снова; для OpenVZ обратитесь к хостинг-провайдеру.${RESET}"
         else
-            echo -e "${RED}这个内核没有 BBR（可用的拥塞控制：$(available_cc)）。Debian / Ubuntu 可以选「2」换 XanMod 内核。${RESET}"
+            echo -e "${RED}В этом ядре нет поддержки BBR (доступные алгоритмы: $(available_cc)). На Debian / Ubuntu можно выбрать пункт «2» для установки ядра XanMod.${RESET}"
         fi
         return 1
     fi
@@ -322,14 +322,14 @@ enable_bbr() {
     write_bbr_sysctl
     apply_bbr_sysctl
     if [ "$(current_cc)" = "bbr" ]; then
-        echo -e "${GREEN}✓ BBR 已启用（拥塞控制 bbr，默认队列 $(current_qdisc)），重启后保持。${RESET}"
+        echo -e "${GREEN}✓ BBR включен (контроль перегрузки: bbr, очередь по умолчанию: $(current_qdisc)), сохранится после перезагрузки.${RESET}"
     else
-        echo -e "${RED}没能切换到 BBR，当前拥塞控制仍是 $(current_cc)。${RESET}"
+        echo -e "${RED}Не удалось переключиться на BBR, текущий алгоритм контроля перегрузки по-прежнему $(current_cc).${RESET}"
         return 1
     fi
 }
 
-# CPU 支持的 x86-64 指令集级别（1–4），XanMod 按它分包
+# Уровень набора инструкций x86-64, поддерживаемый процессором (1–4); XanMod разделяет пакеты ядер по этим уровням
 cpu_level() {
     local flags f
     flags=" $(grep -m1 '^flags' "$CPUINFO" | cut -d: -f2) "
@@ -340,15 +340,15 @@ cpu_level() {
     echo 4
 }
 
-# 这个系统版本的源里有哪些 XanMod 内核包：各版本不一样（Debian 12 只有 LTS 版）
+# Получение списка пакетов ядер XanMod, доступных в репозитории для данной версии системы (например, для Debian 12 есть только LTS-версии)
 xanmod_packages() {   # <codename>
     curl -fsSL --retry 2 --max-time 60 "${XANMOD_REPO}/dists/$1/main/binary-amd64/Packages.gz" | gzip -dc 2>/dev/null |
         sed -n 's/^Package: \(linux-xanmod-[a-z0-9-]*\)$/\1/p' | sort -u
 }
 
-# 级别 → 包：先主线，没有就 LTS，再没有就低一级的（低级别的内核在新 CPU 上照样能跑）。
-# 主线只有 x64v2、x64v3（v4 的 CPU 用 v3），v1 只剩 LTS 版
-xanmod_package() {   # <级别> <源里有的包，每行一个>
+# Сопоставление уровня CPU и пакета: сначала ищем mainline, если нет — LTS, если и его нет — на уровень ниже (ядра более низкого уровня нормально работают на новых CPU).
+# В mainline есть только x64v2 и x64v3 (процессоры с v4 используют v3), для v1 осталась только LTS-версия
+xanmod_package() {   # <уровень> <доступные в репозитории пакеты, по одному на строке>
     local c want
     case "$1" in
         1) want="lts-x64v1" ;;
@@ -364,65 +364,65 @@ xanmod_package() {   # <级别> <源里有的包，每行一个>
 install_xanmod() {
     detect_os
     if [ "$(uname -m)" != "x86_64" ]; then
-        echo -e "${RED}XanMod 只提供 x86_64 内核，这台是 $(uname -m)。可以选「1」用内核自带的 BBR。${RESET}"; return 1
+        echo -e "${RED}XanMod предоставляет ядра только для архитектуры x86_64, а здесь $(uname -m). Вы можете выбрать пункт «1» для использования встроенного в ядро BBR.${RESET}"; return 1
     fi
     if [ "$OS_FAMILY" != "debian" ]; then
-        echo -e "${RED}XanMod 只提供 Debian / Ubuntu 的软件包。可以选「1」用内核自带的 BBR。${RESET}"; return 1
+        echo -e "${RED}XanMod предоставляет пакеты только для Debian / Ubuntu. Вы можете выбрать пункт «1» для использования встроенного в ядро BBR.${RESET}"; return 1
     fi
-    # 模拟安装（测试用）不碰内核，容器里也可以走一遍
+    # Симуляция установки (для тестов) не затрагивает ядро, поэтому ее можно прогнать и в контейнере
     if in_container && [ "${BBR_APT_SIMULATE:-}" != "1" ]; then
-        echo -e "${RED}这里是容器或 OpenVZ：内核是宿主机的，换不了。${RESET}"; return 1
+        echo -e "${RED}Это контейнер или OpenVZ: используется ядро хоста, заменить его нельзя.${RESET}"; return 1
     fi
     if secure_boot_on; then
-        echo -e "${RED}这台机器开了安全启动（Secure Boot）：XanMod 内核没有签名，装上会开不了机。${RESET}"
-        echo -e "${YELLOW}要换内核，先在服务商的控制面板里关掉安全启动；或者选「1」用内核自带的 BBR。${RESET}"; return 1
+        echo -e "${RED}На этой машине включена безопасная загрузка (Secure Boot): ядра XanMod не подписаны, после установки система не сможет загрузиться.${RESET}"
+        echo -e "${YELLOW}Чтобы сменить ядро, сначала отключите Secure Boot в панели управления хостинг-провайдера; либо выберите пункт «1» для использования встроенного BBR.${RESET}"; return 1
     fi
     ensure_cmds curl gpg gzip || return 1
     local codename level pkg ans
     codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
     if [ -z "$codename" ] || ! xanmod_suite_ok "$codename"; then
-        echo -e "${RED}XanMod 没有这个系统版本（${codename:-未知}）的软件源。支持的有 Debian 12 / 13、Ubuntu 24.04 等。${RESET}"; return 1
+        echo -e "${RED}У XanMod нет репозитория для этой версии системы (${codename:-неизвестно}). Поддерживаются Debian 12 / 13, Ubuntu 24.04 и др.${RESET}"; return 1
     fi
     level=$(cpu_level)
     if ! pkg=$(xanmod_package "$level" "$(xanmod_packages "$codename")"); then
-        echo -e "${RED}XanMod 的 ${codename} 源里没有适合这颗 CPU（x86-64-v${level}）的内核包，或者包列表没能下载。${RESET}"; return 1
+        echo -e "${RED}В репозитории XanMod для ${codename} нет подходящего пакета ядра для этого процессора (x86-64-v${level}), либо не удалось загрузить список пакетов.${RESET}"; return 1
     fi
-    echo -e "${CYAN}CPU 指令集级别：x86-64-v${level}  →  安装 ${pkg}（系统：${codename}）${RESET}"
-    echo -e "${YELLOW}会装一个新内核并设为默认启动，重启后生效；当前内核保留在启动菜单里。${RESET}"
-    read -rp "继续吗？[y/N]: " ans
-    case "$ans" in [yY]*) ;; *) echo "已取消。"; return 0 ;; esac
+    echo -e "${CYAN}Уровень инструкций CPU: x86-64-v${level}  →  установка ${pkg} (система: ${codename})${RESET}"
+    echo -e "${YELLOW}Будет установлено новое ядро и назначено по умолчанию, изменения вступят в силу после перезагрузки; текущее ядро останется в меню загрузки.${RESET}"
+    read -rp "Продолжить? [y/N]: " ans
+    case "$ans" in [yY]*) ;; *) echo "Отменено."; return 0 ;; esac
 
     mkdir -p "$(dirname "$XANMOD_KEYRING")"
     if ! curl -fsSL --retry 3 --max-time 60 "$XANMOD_KEY_URL" | gpg --dearmor --yes -o "$XANMOD_KEYRING"; then
-        echo -e "${RED}下载 XanMod 签名密钥失败。${RESET}"; return 1
+        echo -e "${RED}Не удалось скачать ключ подписи XanMod.${RESET}"; return 1
     fi
     echo "deb [signed-by=${XANMOD_KEYRING}] ${XANMOD_REPO} ${codename} main" > "$XANMOD_LIST"
     wait_for_apt
     if ! apt-get update -qq; then
-        echo -e "${RED}apt-get update 失败。${RESET}"; return 1
+        echo -e "${RED}Ошибка выполнения apt-get update.${RESET}"; return 1
     fi
     local sim=""
     [ "${BBR_APT_SIMULATE:-}" = "1" ] && sim="-s"
     if ! DEBIAN_FRONTEND=noninteractive apt-get install -y $sim "$pkg"; then
-        echo -e "${RED}安装 ${pkg} 失败。${RESET}"; return 1
+        echo -e "${RED}Ошибка установки ${pkg}.${RESET}"; return 1
     fi
     if [ -n "$sim" ]; then
-        echo -e "${YELLOW}（模拟安装，没有真的装内核）${RESET}"; return 0
+        echo -e "${YELLOW}(Симуляция установки, ядро на самом деле не устанавливалось)${RESET}"; return 0
     fi
-    # XanMod 的默认拥塞控制就是 BBR v3；参数照样写好，重启后两边一致
+    # Алгоритм контроля перегрузки по умолчанию в XanMod — уже BBR v3; тем не менее записываем параметры в конфиг для единообразия после перезагрузки
     cleanup_legacy_sysctl
     write_bbr_sysctl
-    echo -e "${GREEN}✓ ${pkg} 已安装，重启后用上新内核与 BBR v3。${RESET}"
-    read -rp "现在重启吗？[y/N]: " ans
+    echo -e "${GREEN}✓ ${pkg} установлен, новое ядро и BBR v3 будут задействованы после перезагрузки.${RESET}"
+    read -rp "Перезагрузить сейчас? [y/N]: " ans
     case "$ans" in [yY]*) reboot ;; esac
 }
 
 reset_bbr() {
     if [ ! -f "$BBR_SYSCTL" ] && [ ! -f "$BBR_MODULES" ]; then
-        echo -e "${YELLOW}本脚本没有写过 BBR 设置。${RESET}"; return 0
+        echo -e "${YELLOW}Этот скрипт еще не записывал настройки BBR.${RESET}"; return 0
     fi
     local orig="" line
-    [ -f "$BBR_SYSCTL" ] && orig=$(sed -n 's/^# 原值 //p' "$BBR_SYSCTL")
+    [ -f "$BBR_SYSCTL" ] && orig=$(sed -n 's/^# Исходное значение //p' "$BBR_SYSCTL")
     rm -f "$BBR_SYSCTL" "$BBR_MODULES"
     if [ -n "$orig" ]; then
         printf '%s\n' "$orig" | while IFS= read -r line; do
@@ -431,15 +431,15 @@ reset_bbr() {
     else
         sysctl -w net.ipv4.tcp_congestion_control=cubic >/dev/null 2>&1 || true
     fi
-    # 再按系统自己的配置（sysctl.d 里其他文件）走一遍，和开机时一样
+    # Повторно применяем собственные системные конфигурации (остальные файлы в sysctl.d), как при загрузке ОС
     sysctl --system >/dev/null 2>&1 || true
-    echo -e "${GREEN}✓ 已移除本脚本的 BBR 设置，拥塞控制 $(current_cc)，默认队列 $(current_qdisc)。${RESET}"
+    echo -e "${GREEN}✓ Настройки BBR этого скрипта удалены. Контроль перегрузки: $(current_cc), очередь по умолчанию: $(current_qdisc).${RESET}"
     if [ "$(current_cc)" = "bbr" ] && ! xanmod_running; then
         local where
         where=$(grep -lsE '^[[:space:]]*net\.ipv4\.tcp_congestion_control[[:space:]]*=[[:space:]]*bbr' /etc/sysctl.conf /etc/sysctl.d/*.conf | tr '\n' ' ')
-        [ -n "$where" ] && echo -e "${YELLOW}拥塞控制仍是 bbr：${where}里也设置了它（不是本脚本写的，没有动）。${RESET}"
+        [ -n "$where" ] && echo -e "${YELLOW}Контроль перегрузки по-прежнему bbr: он также задан в ${where}(записано не этим скриптом, оставлено без изменений).${RESET}"
     fi
-    xanmod_installed && echo -e "${YELLOW}XanMod 内核还在；要换回原内核：apt-get remove 'linux-image-*xanmod*' 'linux-headers-*xanmod*' 后重启。${RESET}"
+    xanmod_installed && echo -e "${YELLOW}Ядро XanMod все еще установлено. Чтобы вернуться к стандартному ядру, выполните: apt-get remove 'linux-image-*xanmod*' 'linux-headers-*xanmod*' и перезагрузите систему.${RESET}"
     return 0
 }
 
@@ -448,14 +448,14 @@ main_menu() {
     fix_legacy_xanmod_repo
     while true; do
         echo
-        echo -e "${CYAN}── BBR 管理 ──────────────────────────────────${RESET}"
+        echo -e "${CYAN}── Управление BBR ────────────────────────────${RESET}"
         show_status
         echo -e "${CYAN}──────────────────────────────────────────────${RESET}"
-        echo -e "  ${GREEN}1${RESET}  启用 BBR（内核自带）"
-        echo -e "  ${GREEN}2${RESET}  换 XanMod 内核（BBR v3，Debian / Ubuntu x86_64）"
-        echo -e "  ${GREEN}3${RESET}  恢复默认（移除本脚本的 BBR 设置）"
-        echo -e "  ${GREEN}0${RESET}  返回"
-        if ! read -rp "请选择 [0-3]: " choice; then
+        echo -e "  ${GREEN}1${RESET}  Включить BBR (встроенный в ядро)"
+        echo -e "  ${GREEN}2${RESET}  Установить ядро XanMod (BBR v3, Debian / Ubuntu x86_64)"
+        echo -e "  ${GREEN}3${RESET}  Восстановить по умолчанию (удалить настройки BBR этого скрипта)"
+        echo -e "  ${GREEN}0${RESET}  Назад"
+        if ! read -rp "Выберите действие [0-3]: " choice; then
             echo; return 0
         fi
         case "$choice" in
@@ -463,7 +463,7 @@ main_menu() {
             2) install_xanmod ;;
             3) reset_bbr ;;
             0) return 0 ;;
-            *) echo -e "${RED}无效的选择${RESET}" ;;
+            *) echo -e "${RED}Неверный выбор${RESET}" ;;
         esac
     done
 }
