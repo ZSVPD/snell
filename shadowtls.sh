@@ -1,17 +1,17 @@
 #!/bin/bash
-# 此文件由 tools/build.sh 从 src/shadowtls.sh 和 src/lib 生成：请修改 src/ 下的文件后重新生成。
+# Этот файл сгенерирован с помощью tools/build.sh из src/shadowtls.sh и src/lib: вносите изменения в файлы в каталоге src/ и генерируйте заново.
 # =========================================
-# 作者: jinqians
-# 日期: 2025年3月16
-# 网站：jinqians.com
-# 描述: 这个脚本用于安装和管理 ShadowTLS V3
+# Автор: jinqians
+# Дата: 16 марта 2025 г.
+# Сайт: jinqians.com
+# Описание: Этот скрипт используется для установки и управления ShadowTLS V3
 # =========================================
 
-# 共用部分（src/lib，发布时由 tools/build.sh 合进来）：颜色、防火墙、
-# Snell 的路径与通道信息（每个用户配置首行的 "#version-choice = vX" 标明该端口跑的是哪个版本）
+# Общая часть (src/lib, объединяется через tools/build.sh при релизе): цвета, файрвол,
+# пути и информация о ветках версий Snell (первая строка каждого конфига пользователя "#version-choice = vX" указывает, какая версия запущена на этом порту)
 # ── lib/common.sh ─────────────────────────────────────────────────────────────
-# 所有脚本共用：颜色、root 检查、系统与包管理器、脚本的发布地址。
-# 只用 POSIX sh 的写法：Alpine / Docker 版脚本在 ash、dash 下也要能用。
+# Общее для всех скриптов: цвета, проверка root, система и пакетный менеджер, адреса публикации скриптов.
+# Используется только синтаксис POSIX sh: версии скриптов для Alpine / Docker должны работать в ash и dash.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,33 +19,33 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# 脚本的发布地址。短域名（*.jinqians.com）由 Cloudflare 重定向到仓库里的文件：
-# snell / snell-centos / snell-alpine → 根目录，menu / snell-docker / install → scripts/。
-# 菜单里调用的子脚本从 SNELL_RAW_BASE 下的 scripts/、docker/ 取。
-# 脚本自身的更新与管理命令走短域名，运行才会被统计到。
-# 可以用同名环境变量换成镜像地址（测试时指向本地的文件）。
+# Адреса публикации скриптов. Короткие домены (*.jinqians.com) перенаправляются через Cloudflare на файлы в репозитории:
+# snell / snell-centos / snell-alpine → корневой каталог, menu / snell-docker / install → scripts/.
+# Дочерние скрипты, вызываемые из меню, берутся из scripts/ и docker/ по адресу SNELL_RAW_BASE.
+# Обновление самих скриптов и команды управления идут через короткие домены для учёта статистики запусков.
+# Можно заменить на адрес зеркала через одноимённые переменные окружения (при тестировании — указать на локальные файлы).
 SNELL_RAW_BASE="${SNELL_RAW_BASE:-https://raw.githubusercontent.com/jinqians/snell/main}"
-SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh（Debian / Ubuntu / CentOS / RHEL）
+SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh (Debian / Ubuntu / CentOS / RHEL)
 SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://snell-alpine.jinqians.com}" # snell-alpine.sh
 SNELL_DOCKER_SCRIPT_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}" # snell-docker.sh
 SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://menu.jinqians.com}"             # menu.sh
 
-# 检查是否以 root 权限运行
+# Проверка запуска с правами root
 check_root() {
     if [ "$(id -u)" != "0" ]; then
-        printf '%b\n' "${RED}请以 root 权限运行此脚本${RESET}"
+        printf '%b\n' "${RED}Пожалуйста, запустите этот скрипт с правами root${RESET}"
         exit 1
     fi
 }
 
-# 识别系统：OS_FAMILY = debian | rhel | alpine | unknown，PKG = apt | dnf | yum | apk
+# Определение ОС: OS_FAMILY = debian | rhel | alpine | unknown, PKG = apt | dnf | yum | apk
 OS_FAMILY=""
 PKG=""
 detect_os() {
     [ -n "$OS_FAMILY" ] && return 0
     OS_FAMILY="unknown"
     if [ -f /etc/os-release ]; then
-        # 在子 shell 里读，os-release 的 NAME / VERSION 等变量不会覆盖脚本自己的
+        # Чтение в подоболочке (subshell), чтобы переменные NAME / VERSION из os-release не перезаписали переменные скрипта
         case " $(. /etc/os-release; echo "$ID $ID_LIKE" | tr '[:upper:]' '[:lower:]') " in
             *" debian "*|*" ubuntu "*) OS_FAMILY="debian" ;;
             *" rhel "*|*" centos "*|*" fedora "*|*" rocky "*|*" almalinux "*) OS_FAMILY="rhel" ;;
@@ -61,16 +61,16 @@ detect_os() {
     fi
 }
 
-# 等待其他 apt 进程完成
+# Ожидание завершения других процессов apt
 wait_for_apt() {
     command -v fuser >/dev/null 2>&1 || return 0
     while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
-        printf '%b\n' "${YELLOW}等待其他 apt 进程完成...${RESET}"
+        printf '%b\n' "${YELLOW}Ожидание завершения других процессов apt...${RESET}"
         sleep 2
     done
 }
 
-# 用系统的包管理器安装软件包
+# Установка пакетов с помощью системного пакетного менеджера
 pkg_install() {
     detect_os
     case "$PKG" in
@@ -83,13 +83,13 @@ pkg_install() {
         yum) yum install -y "$@" ;;
         apk) apk add --no-cache "$@" ;;
         *)
-            printf '%b\n' "${RED}未识别的包管理器，请手动安装：$*${RESET}"
+            printf '%b\n' "${RED}Неизвестный пакетный менеджер, пожалуйста, установите вручную: $*${RESET}"
             return 1
             ;;
     esac
 }
 
-# 提供某个命令的软件包名（各发行版不同的在这里对上）
+# Сопоставление команды с именем пакета (различия между дистрибутивами указываются здесь)
 pkg_for_cmd() {
     detect_os
     case "$1" in
@@ -103,45 +103,45 @@ pkg_for_cmd() {
     esac
 }
 
-# 缺哪个命令就装哪个包；装不上返回非 0，由调用方决定是否退出
+# Установка недостающих пакетов для команд; при неудаче возвращает ненулевой код, решение о выходе принимает вызывающая сторона
 ensure_cmds() {
     _ec_missing=""
     for _ec_cmd in "$@"; do
         command -v "$_ec_cmd" >/dev/null 2>&1 || _ec_missing="${_ec_missing} $(pkg_for_cmd "$_ec_cmd")"
     done
     [ -z "$_ec_missing" ] && return 0
-    printf '%b\n' "${YELLOW}正在安装依赖：${_ec_missing# }${RESET}"
-    # shellcheck disable=SC2086 # 包名按空格分开传
+    printf '%b\n' "${YELLOW}Установка зависимостей: ${_ec_missing# }${RESET}"
+    # shellcheck disable=SC2086 # Имена пакетов передаются через пробел
     pkg_install $_ec_missing || return 1
     for _ec_cmd in "$@"; do
         if ! command -v "$_ec_cmd" >/dev/null 2>&1; then
-            printf '%b\n' "${RED}安装后仍找不到 ${_ec_cmd}，请手动安装 $(pkg_for_cmd "$_ec_cmd")${RESET}"
+            printf '%b\n' "${RED}После установки команда ${_ec_cmd} всё ещё не найдена, установите $(pkg_for_cmd "$_ec_cmd") вручную${RESET}"
             return 1
         fi
     done
 }
 
-# 下载远程脚本并做完整性校验：传输失败即停、非空、语法检查。
-# 只能保证传输完整；仓库本身被篡改要靠发布签名来防。
+# Скачивание удалённого скрипта и проверка целостности: остановка при сбое передачи, проверка на непустой файл и проверка синтаксиса.
+# Гарантирует только целостность передачи; от компрометации самого репозитория защищает только подпись релиза.
 fetch_verified_script() {   # <url> <dest>
     if ! curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 "$1" -o "$2"; then
-        printf '%b\n' "${RED}下载失败: $1${RESET}" >&2
+        printf '%b\n' "${RED}Ошибка скачивания: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
     if [ ! -s "$2" ]; then
-        printf '%b\n' "${RED}下载的文件为空，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный файл пуст и был отброшен: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
-    # bash 能解析 sh 写法；没有 bash 的系统（Alpine）用 sh 检查
+    # bash может парсить синтаксис sh; в системах без bash (Alpine) для проверки используется sh
     if command -v bash >/dev/null 2>&1; then
         _fv_shell=bash
     else
         _fv_shell=sh
     fi
     if ! "$_fv_shell" -n "$2" 2>/dev/null; then
-        printf '%b\n' "${RED}下载的脚本未通过语法检查，已丢弃: $1${RESET}" >&2
+        printf '%b\n' "${RED}Скачанный скрипт не прошёл проверку синтаксиса и был отброшен: $1${RESET}" >&2
         rm -f "$2"
         return 1
     fi
@@ -149,19 +149,19 @@ fetch_verified_script() {   # <url> <dest>
 }
 
 # ── lib/release.sh ────────────────────────────────────────────────────────────
-# Snell 官方版本：从发布页取各大版本的最新版本号，生成下载地址。POSIX sh。
+# Официальные версии Snell: получение последних номеров основных версий со страницы релизов и генерация ссылок для скачивания. POSIX sh.
 
-# 抓取失败、或发布页上没有这个大版本的下载地址时的兜底版本号。
-# v6.0.0 正式版发布后，发布页去掉了 v5 的下载地址（只留更新说明），v5 从此只能靠这里的 v5.0.1
+# Резервные номера версий на случай сбоя парсинга или отсутствия ссылки на основную версию на странице релизов.
+# После выхода релизной версии v6.0.0 со страницы убрали ссылки на скачивание v5 (оставив только описание изменений), поэтому v5 теперь опирается только на указанную здесь v5.0.1
 SNELL_V4_FALLBACK="v4.1.1"
 SNELL_V5_FALLBACK="v5.0.1"
 SNELL_V6_FALLBACK="v6.0.0"
 
-# Snell 官方发布页（旧的 manual.nssurge.com/others/snell.html 已下线）
+# Официальная страница релизов Snell (старая manual.nssurge.com/others/snell.html отключена)
 SNELL_RELEASE_NOTES_URL="https://kb.nssurge.com/surge-knowledge-base/release-notes/snell"
 SNELL_RELEASE_NOTES_URL_ZH="https://kb.nssurge.com/surge-knowledge-base/zh/release-notes/snell"
 
-# 抓取官方发布页内容
+# Получение содержимого официальной страницы релизов
 fetch_snell_release_notes() {
     local notes
     notes=$(curl -sL --max-time 15 "$SNELL_RELEASE_NOTES_URL")
@@ -171,8 +171,8 @@ fetch_snell_release_notes() {
     echo "$notes"
 }
 
-# 把版本号转成定长可排序键，排序优先级：beta < rc < 正式版
-# 6.0.0b4 -> 006.000.000.1.0004；6.0.0rc -> 006.000.000.2.0000；6.0.0rc2 -> 006.000.000.2.0002；6.0.0 -> 006.000.000.3.0000
+# Преобразование номера версии в ключ фиксированной длины для сортировки; приоритет: beta < rc < релиз
+# 6.0.0b4 -> 006.000.000.1.0004; 6.0.0rc -> 006.000.000.2.0000; 6.0.0rc2 -> 006.000.000.2.0002; 6.0.0 -> 006.000.000.3.0000
 snell_version_sort_key() {
     echo "${1#[vV]}" | awk '{
         ver = $0
@@ -194,7 +194,7 @@ snell_version_sort_key() {
     }'
 }
 
-# 从发布页中挑出指定大版本的最新版本（页面上的先后顺序不代表新旧，必须排序）
+# Выбор последней версии указанной основной ветки со страницы релизов (порядок на странице не гарантирует новизну, необходима сортировка)
 pick_latest_snell_version() {
     local major="$1"
     local notes="$2"
@@ -211,7 +211,7 @@ pick_latest_snell_version() {
         | awk '{print $2}'
 }
 
-# 获取 Snell v4 最新版本
+# Получение последней версии Snell v4
 get_latest_snell_v4_version() {
     local ver
     ver=$(pick_latest_snell_version 4 "$(fetch_snell_release_notes)")
@@ -222,7 +222,7 @@ get_latest_snell_v4_version() {
     fi
 }
 
-# 获取 Snell v5 最新版本
+# Получение последней версии Snell v5
 get_latest_snell_v5_version() {
     local ver
     ver=$(pick_latest_snell_version 5 "$(fetch_snell_release_notes)")
@@ -233,7 +233,7 @@ get_latest_snell_v5_version() {
     fi
 }
 
-# 获取 Snell v6 最新版本
+# Получение последней версии Snell v6
 get_latest_snell_v6_version() {
     local ver
     ver=$(pick_latest_snell_version 6 "$(fetch_snell_release_notes)")
@@ -244,7 +244,7 @@ get_latest_snell_v6_version() {
     fi
 }
 
-# 解析指定通道的最新版本号（失败时回落到内置常量）
+# Определение последнего номера версии для указанной ветки (при неудаче используется встроенная константа)
 resolve_latest_version_for_channel() {
     case "$1" in
         v6) get_latest_snell_v6_version ;;
@@ -254,7 +254,7 @@ resolve_latest_version_for_channel() {
     esac
 }
 
-# 生成指定通道 + 版本号的下载地址；不支持的架构返回非 0（不 exit，调用方可继续）
+# Генерация ссылки на скачивание для указанной ветки и версии; для неподдерживаемых архитектур возвращает ненулевой код (без exit, чтобы вызывающая сторона могла продолжить работу)
 snell_download_url_for() {
     local version_choice="$1"
     local resolved_version="$2"
@@ -264,13 +264,13 @@ snell_download_url_for() {
     case "$version_choice" in
         v4|v5|v6) ;;
         *)
-            printf '%b\n' "${RED}不支持的 Snell 通道: ${version_choice}${RESET}" >&2
+            printf '%b\n' "${RED}Неподдерживаемая ветка Snell: ${version_choice}${RESET}" >&2
             return 1
             ;;
     esac
 
     if [ "$version_choice" = "v6" ] && { [ "$arch" = "armv7l" ] || [ "$arch" = "armv7" ]; }; then
-        printf '%b\n' "${RED}Snell v6 暂不提供 armv7l 构建${RESET}" >&2
+        printf '%b\n' "${RED}Для Snell v6 пока не предоставляются сборки под armv7l${RESET}" >&2
         return 1
     fi
 
@@ -280,28 +280,28 @@ snell_download_url_for() {
         "aarch64"|"arm64") echo "https://dl.nssurge.com/snell/snell-server-${resolved_version}-linux-aarch64.zip" ;;
         "armv7l"|"armv7")  echo "https://dl.nssurge.com/snell/snell-server-${resolved_version}-linux-armv7l.zip" ;;
         *)
-            printf '%b\n' "${RED}不支持的架构: ${arch}${RESET}" >&2
+            printf '%b\n' "${RED}Неподдерживаемая архитектура: ${arch}${RESET}" >&2
             return 1
             ;;
     esac
 }
 
 # ── lib/firewall.sh ───────────────────────────────────────────────────────────
-# 开放 / 关闭端口：firewalld、ufw、iptables + ip6tables、nftables，系统在用哪个就配哪个，
-# 并持久化。所有脚本共用这一份（以前各脚本各有一份，CentOS 版才认 firewalld、
-# Docker 版只开 TCP、重复安装会叠加重复规则）。POSIX sh。
+# Открытие / закрытие портов: firewalld, ufw, iptables + ip6tables, nftables — настраивается и сохраняется то, что используется в системе.
+# Этот модуль общий для всех скриптов (раньше в каждом скрипте была своя копия: только версия для CentOS распознавала firewalld,
+# Docker-версия открывала только TCP, а повторная установка дублировала правила). POSIX sh.
 
-# firewalld 正在运行
+# firewalld запущен
 _fw_firewalld_active() {
     command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1
 }
 
-# ufw 已启用（-w：不把 inactive 当成 active）
+# ufw включён (-w: чтобы не принять inactive за active)
 _fw_ufw_active() {
     command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"
 }
 
-# both | tcp | udp → 协议列表
+# both | tcp | udp → список протоколов
 _fw_protos() {
     case "$1" in
         tcp) echo "tcp" ;;
@@ -310,7 +310,7 @@ _fw_protos() {
     esac
 }
 
-# iptables 规则持久化：Debian 的 /etc/iptables、RHEL 的 iptables-services、Alpine 的 init 脚本
+# Сохранение правил iptables: /etc/iptables в Debian, iptables-services в RHEL, init-скрипт в Alpine
 _fw_iptables_save() {
     if [ -x /etc/init.d/iptables ] && command -v rc-update >/dev/null 2>&1; then
         /etc/init.d/iptables save >/dev/null 2>&1 || true
@@ -329,12 +329,12 @@ _fw_iptables_save() {
     fi
 }
 
-# iptables / ip6tables：没有同样的规则才插入
+# iptables / ip6tables: вставка правила только при отсутствии аналогичного
 _fw_iptables_open() {   # <port> <protos>
     _fio_changed=false
     for _fio_t in iptables ip6tables; do
         command -v "$_fio_t" >/dev/null 2>&1 || continue
-        "$_fio_t" -L INPUT -n >/dev/null 2>&1 || continue   # 内核或容器里不可用
+        "$_fio_t" -L INPUT -n >/dev/null 2>&1 || continue   # Недоступно в ядре или контейнере
         for _fio_p in $2; do
             if ! "$_fio_t" -C INPUT -p "$_fio_p" --dport "$1" -j ACCEPT 2>/dev/null; then
                 "$_fio_t" -I INPUT -p "$_fio_p" --dport "$1" -j ACCEPT 2>/dev/null && _fio_changed=true
@@ -342,7 +342,7 @@ _fw_iptables_open() {   # <port> <protos>
         done
     done
     if [ "$_fio_changed" = true ]; then
-        printf '%b\n' "${CYAN}在 iptables 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в iptables${RESET}"
         _fw_iptables_save
     fi
 }
@@ -362,7 +362,7 @@ _fw_iptables_close() {   # <port>
     return 0
 }
 
-# 保存 nftables 规则（有持久化配置文件时）
+# Сохранение правил nftables (при наличии конфигурационного файла для постоянного хранения)
 save_nftables_rules() {
     command -v nft >/dev/null 2>&1 || return 0
     for _snr_f in /etc/nftables.conf /etc/sysconfig/nftables.conf /etc/nftables.nft; do
@@ -373,14 +373,14 @@ save_nftables_rules() {
         elif command -v rc-update >/dev/null 2>&1; then
             rc-update add nftables boot >/dev/null 2>&1 || true
         fi
-        printf '%b\n' "${GREEN}nftables 规则已保存${RESET}"
+        printf '%b\n' "${GREEN}Правила nftables сохранены${RESET}"
         return 0
     done
     return 0
 }
 
-# nftables 里 hook 在 input 上的 filter 链（"族 表 链" 每行一条）。
-# iptables-nft 自己的 ip/ip6 filter 表已由 iptables 处理，跳过，免得规则重复。
+# Цепочки фильтрации в nftables с хуком на input (по одной записи "семейство таблица цепочка" на строку).
+# Таблицы filter для ip/ip6 от iptables-nft уже обрабатываются через iptables, пропускаем их во избежание дублирования правил.
 _fw_nft_input_chains() {
     nft -a list ruleset 2>/dev/null | awk -v skip_ipt="$1" '
         $1 == "table" { family = $2; table = $3; gsub(/[{}]/, "", table) }
@@ -392,7 +392,7 @@ _fw_nft_input_chains() {
     '
 }
 
-# 在 nftables 现有的 input 链里放行端口（没有 nftables 防火墙时什么都不做）
+# Разрешение порта в существующих цепочках input в nftables (ничего не делает при отсутствии файрвола nftables)
 open_nftables_port() {   # <port> [both|tcp|udp]
     command -v nft >/dev/null 2>&1 || return 0
     _onp_skip=0
@@ -412,12 +412,12 @@ open_nftables_port() {   # <port> [both|tcp|udp]
 $_onp_chains
 EOF
     if [ "$_onp_changed" = true ]; then
-        printf '%b\n' "${CYAN}在 nftables 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в nftables${RESET}"
         save_nftables_rules
     fi
 }
 
-# 删掉 nftables 里放行该端口的规则
+# Удаление правил, разрешающих данный порт в nftables
 close_nftables_port() {   # <port>
     command -v nft >/dev/null 2>&1 || return 0
     _cnp_rules=$(nft -a list ruleset 2>/dev/null | awk -v port="$1" '
@@ -435,20 +435,20 @@ EOF
     save_nftables_rules
 }
 
-# 开放端口：firewalld 在运行就只交给它；ufw 已启用就只交给它；否则配 iptables 与 nftables
+# Открытие порта: если запущен firewalld — используем только его; если включён ufw — только его; иначе настраиваем iptables и nftables
 open_port() {   # <port> [both|tcp|udp]
     _op_protos=$(_fw_protos "${2:-both}")
     if _fw_firewalld_active; then
-        printf '%b\n' "${CYAN}在 firewalld 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в firewalld${RESET}"
         for _op_p in $_op_protos; do
             firewall-cmd --permanent --add-port="$1/${_op_p}" >/dev/null 2>&1 || true
             firewall-cmd --add-port="$1/${_op_p}" >/dev/null 2>&1 || true
         done
         return 0
     fi
-    # ufw 装了但没启用时也写进去：以后启用 ufw 时端口仍是开的
+    # Если ufw установлен, но не включён, всё равно добавляем правило: при последующем включении ufw порт останется открытым
     if command -v ufw >/dev/null 2>&1; then
-        printf '%b\n' "${CYAN}在 UFW 中开放端口 $1${RESET}"
+        printf '%b\n' "${CYAN}Открытие порта $1 в UFW${RESET}"
         for _op_p in $_op_protos; do
             ufw allow "$1/${_op_p}" >/dev/null 2>&1 || true
         done
@@ -459,7 +459,7 @@ open_port() {   # <port> [both|tcp|udp]
     return 0
 }
 
-# 关闭端口：各个防火墙里放行它的规则都删掉
+# Закрытие порта: удаление разрешающих правил для этого порта во всех файрволах
 close_port() {   # <port>
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         for _cp_p in tcp udp; do
@@ -477,7 +477,7 @@ close_port() {   # <port>
     return 0
 }
 
-# 端口在当前防火墙里是否放行（测试与状态显示用）：firewalld / ufw / iptables / nftables 任一处放行即算
+# Проверка, разрешён ли порт в текущем файрволе (для тестирования и отображения статуса): достаточно разрешения в любом из firewalld / ufw / iptables / nftables
 port_allowed() {   # <port> <tcp|udp>
     if _fw_firewalld_active; then
         firewall-cmd --query-port="$1/$2" >/dev/null 2>&1
@@ -493,7 +493,7 @@ port_allowed() {   # <port> <tcp|udp>
     command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q "$2 dport $1 .*accept"
 }
 
-# 端口是否有进程在监听（TCP 或 UDP）
+# Проверка, прослушивается ли порт каким-либо процессом (TCP или UDP)
 is_port_in_use() {   # <port>
     if command -v ss >/dev/null 2>&1; then
         ss -H -ltn "( sport = :$1 )" 2>/dev/null | grep -q . && return 0
@@ -508,7 +508,7 @@ is_port_in_use() {   # <port>
     return 1
 }
 
-# 显示占用指定端口的进程
+# Отображение процесса, занимающего указанный порт
 show_port_occupier() {   # <port>
     if command -v ss >/dev/null 2>&1; then
         ss -ltnp "( sport = :$1 )" 2>/dev/null | sed 's/^/  /'
@@ -522,18 +522,18 @@ show_port_occupier() {   # <port>
 }
 
 # ── lib/channels.sh ───────────────────────────────────────────────────────────
-# systemd 安装的布局与多版本共存（v4 / v5 / v6）。snell.sh、multi-user.sh、
-# shadowtls.sh 共用（bash）。
+# Структура установки systemd и сосуществование нескольких версий (v4 / v5 / v6). Общее для snell.sh, multi-user.sh,
+# shadowtls.sh (bash).
 #
-# 二进制布局：
-#   ${INSTALL_DIR}/snell-server-v4|v5|v6   各通道的实体文件，systemd unit 直接指向它
-#   ${INSTALL_DIR}/snell-server            软链，指向主用户所用通道（保留给旧的探测逻辑）
+# Структура бинарных файлов:
+#   ${INSTALL_DIR}/snell-server-v4|v5|v6   Реальные файлы каждой ветки, юнит systemd указывает напрямую на них
+#   ${INSTALL_DIR}/snell-server            Символическая ссылка, указывающая на ветку основного пользователя (сохранена для старой логики определения)
 #
-# 版本标记：
-#   每个用户配置首行写 "#version-choice = vX"。注释形式，snell-server 不会解析到，
-#   且随 .conf 一起被备份/还原，不需要额外的伴生文件。PSM 写的配置也带这个标记。
+# Маркер версии:
+#   В первой строке каждого пользовательского конфига пишется "#version-choice = vX". Формат комментария не парсится самим snell-server,
+#   и сохраняется/восстанавливается вместе с .conf без необходимости в дополнительных сопутствующих файлах. Конфиги, создаваемые PSM, также содержат этот маркер.
 
-# 系统路径
+# Системные пути
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 SNELL_CONF_DIR="/etc/snell"
@@ -544,7 +544,7 @@ SYSTEMD_SOCKET_FILE="${SYSTEMD_DIR}/snell.socket"
 SYSTEMD_NETNS_FILE="${SYSTEMD_DIR}/snell-netns.service"
 NETNS_SETUP_SCRIPT="${INSTALL_DIR}/snell-netns-setup.sh"
 
-# 旧的配置文件路径（用于兼容性检查）
+# Старые пути к конфигурационным файлам (используются для проверки совместимости)
 OLD_SNELL_CONF_FILE="${SNELL_CONF_DIR}/snell-server.conf"
 OLD_SYSTEMD_SERVICE_FILE="/lib/systemd/system/snell.service"
 SNELL_SERVICE_USER="snell"
@@ -553,7 +553,7 @@ SNELL_SERVICE_GROUP="snell"
 SNELL_VERSION_MARKER_KEY="version-choice"
 SNELL_ALL_VERSIONS="v4 v5 v6"
 
-# 检测当前安装的 Snell 版本
+# Определение текущей установленной версии Snell
 detect_installed_snell_version() {
     if command -v snell-server &> /dev/null; then
         local version_output=$(snell-server --v 2>&1)
@@ -569,7 +569,7 @@ detect_installed_snell_version() {
     fi
 }
 
-# 版本号 -> 二进制路径
+# Номер версии -> путь к бинарному файлу
 snell_binary_for_version() {
     case "$1" in
         v4|v5|v6) echo "${INSTALL_DIR}/snell-server-$1" ;;
@@ -577,7 +577,7 @@ snell_binary_for_version() {
     esac
 }
 
-# 探测指定二进制自身的版本；不可执行时返回 unknown
+# Определение собственной версии указанного бинарного файла; если файл не исполняемый — возвращает unknown
 probe_snell_binary_version() {
     local binary="$1"
     if [ ! -x "$binary" ]; then
@@ -592,12 +592,12 @@ probe_snell_binary_version() {
     elif echo "$version_output" | grep -q "v5"; then
         echo "v5"
     else
-        # 早期 v4 的 --v 输出不带大版本号，与历史行为保持一致按 v4 处理
+        # В ранних версиях v4 вывод --v не содержал основного номера версии; для совместимости со старым поведением считаем это v4
         echo "v4"
     fi
 }
 
-# 列出已落盘的通道（空格分隔，可能为空）
+# Список установленных на диске веток версий (через пробел, может быть пустым)
 list_installed_snell_versions() {
     local version installed=""
     for version in $SNELL_ALL_VERSIONS; do
@@ -608,7 +608,7 @@ list_installed_snell_versions() {
     echo "${installed% }"
 }
 
-# 读取配置里的版本标记；没有标记时返回非 0
+# Чтение маркера версии из конфига; при отсутствии маркера возвращает ненулевой код
 read_conf_snell_version() {
     local conf_file="$1"
     [ -f "$conf_file" ] || return 1
@@ -622,7 +622,7 @@ read_conf_snell_version() {
     esac
 }
 
-# 配置对应的通道：优先读标记，读不到回落到软链的实际版本（兼容尚未迁移的老安装）
+# Ветка версии, соответствующая конфигу: приоритет у чтения маркера, при неудаче — откат к реальной версии по симлинку (совместимость со старыми установками до миграции)
 get_conf_snell_version() {
     local conf_file="$1"
     local marked
@@ -633,8 +633,8 @@ get_conf_snell_version() {
     detect_installed_snell_version
 }
 
-# 幂等写入版本标记：相同则跳过，不同则替换，缺失则插到首行。
-# 用 cat 回写而不是 mv，保留原文件的属主与权限（服务以 snell 用户身份读取）
+# Идемпотентная запись маркера версии: если совпадает — пропуск, если отличается — замена, если отсутствует — вставка в первую строку.
+# Перезапись через cat вместо mv сохраняет владельца и права исходного файла (служба читает файл от имени пользователя snell)
 set_conf_snell_version() {
     local conf_file="$1"
     local version="$2"
@@ -657,27 +657,27 @@ set_conf_snell_version() {
         grep -Ev "^[[:space:]]*#[[:space:]]*${SNELL_VERSION_MARKER_KEY}[[:space:]]*=" "$conf_file"
     } > "$tmp_conf"; then
         rm -f "$tmp_conf"
-        echo -e "${RED}生成版本标记失败: ${conf_file}${RESET}" >&2
+        echo -e "${RED}Не удалось сгенерировать маркер версии: ${conf_file}${RESET}" >&2
         return 1
     fi
 
     if ! cat "$tmp_conf" > "$conf_file"; then
         rm -f "$tmp_conf"
-        echo -e "${RED}回写版本标记失败: ${conf_file}${RESET}" >&2
+        echo -e "${RED}Не удалось записать маркер версии: ${conf_file}${RESET}" >&2
         return 1
     fi
     rm -f "$tmp_conf"
     return 0
 }
 
-# 获取 Snell 端口
+# Получение порта Snell
 get_snell_port() {
     if [ -f "${SNELL_CONF_DIR}/users/snell-main.conf" ]; then
         grep -E '^listen' "${SNELL_CONF_DIR}/users/snell-main.conf" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p'
     fi
 }
 
-# 端口 -> 配置文件路径（主端口走主配置）
+# Порт -> путь к конфигурационному файлу (основной порт использует основной конфиг)
 snell_conf_for_port() {
     local port="$1"
     local main_port
@@ -689,12 +689,12 @@ snell_conf_for_port() {
     fi
 }
 
-# 端口 -> 通道
+# Порт -> ветка версии
 get_port_snell_version() {
     get_conf_snell_version "$(snell_conf_for_port "$1")"
 }
 
-# 端口 -> systemd 服务名
+# Порт -> имя службы systemd
 snell_service_for_port() {
     local port="$1"
     local main_port
@@ -706,7 +706,7 @@ snell_service_for_port() {
     fi
 }
 
-# 指定通道当前被哪些服务使用（每行一个 systemd 服务名）
+# Какими службами в данный момент используется указанная ветка версии (по одному имени службы systemd на строку)
 list_services_using_version() {
     local version="$1"
     local conf_file port
@@ -729,13 +729,13 @@ list_services_using_version() {
     done
 }
 
-# 让 snell-server 软链指向指定通道（旧探测逻辑与 ShadowTLS 仍依赖这个名字）
+# Перенаправление симлинка snell-server на указанную ветку версии (старая логика определения и ShadowTLS всё ещё зависят от этого имени)
 update_snell_symlink() {
     local version="$1"
     local target
     target=$(snell_binary_for_version "$version")
 
-    # 目标不存在时不动现场，避免把可用的旧二进制删成断链
+    # Если целевой файл не существует — ничего не трогаем, чтобы не превратить рабочий старый бинарник в битую ссылку
     if [ ! -x "$target" ]; then
         return 1
     fi
@@ -746,45 +746,45 @@ update_snell_symlink() {
     ln -sfn "$target" "${INSTALL_DIR}/snell-server"
 }
 
-# 下载官方的压缩包并解压出 <目录>/snell-server。只往 stderr 打印进度
-fetch_snell_release_binary() {   # <通道> <版本号> <目录>
+# Скачивание официального архива и распаковка <каталог>/snell-server. Вывод прогресса только в stderr
+fetch_snell_release_binary() {   # <ветка> <версия> <каталог>
     local version="$1" resolved="$2" dir="$3" url
     if ! url=$(snell_download_url_for "$version" "$resolved"); then
         return 1
     fi
 
-    echo -e "${CYAN}正在下载 Snell ${version} (${resolved})...${RESET}" >&2
+    echo -e "${CYAN}Скачивание Snell ${version} (${resolved})...${RESET}" >&2
     echo -e "${YELLOW}${url}${RESET}" >&2
 
-    # 下载与解压要用的命令，缺了先装（任何发行版）
+    # Команды для скачивания и распаковки: если отсутствуют — сначала устанавливаем (для любого дистрибутива)
     ensure_cmds curl unzip >&2 || return 1
 
     if ! curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "${dir}/snell-server.zip" "$url"; then
-        echo -e "${RED}下载 Snell ${version} 失败: ${url}${RESET}" >&2
+        echo -e "${RED}Ошибка скачивания Snell ${version}: ${url}${RESET}" >&2
         return 1
     fi
 
-    # 校验压缩包完整性（官方未发布 hash，只能做传输完整性检查）
+    # Проверка целостности архива (официальные хеши не публикуются, возможна только проверка целостности передачи)
     if ! unzip -t -q "${dir}/snell-server.zip" >/dev/null 2>&1; then
-        echo -e "${RED}下载的压缩包已损坏，已丢弃: ${url}${RESET}" >&2
+        echo -e "${RED}Скачанный архив повреждён и был отброшен: ${url}${RESET}" >&2
         return 1
     fi
 
     if ! unzip -o -q "${dir}/snell-server.zip" -d "$dir"; then
-        echo -e "${RED}解压 Snell ${version} 失败${RESET}" >&2
+        echo -e "${RED}Ошибка распаковки Snell ${version}${RESET}" >&2
         return 1
     fi
 
     if [ ! -f "${dir}/snell-server" ]; then
-        echo -e "${RED}压缩包中未找到 snell-server 可执行文件${RESET}" >&2
+        echo -e "${RED}Исполняемый файл snell-server не найден в архиве${RESET}" >&2
         return 1
     fi
 }
 
-# 本机这个通道的二进制和官方现在提供的 <版本号> 是不是同一个构建。
-# 只比版本号不够：v6 的 rc 自报的也是 v6.0.0，正式版发布后看起来就「已是最新」了。
-# 返回 0：不同，值得更新；1：相同；2：没下载到官方的，没法比
-snell_binary_differs_from_release() {   # <通道> <版本号>
+# Проверка, является ли локальный бинарный файл этой ветки той же сборкой, что и официально предоставляемая сейчас <версия>.
+# Одного сравнения номеров версий недостаточно: релиз-кандидаты (rc) v6 также сообщают версию v6.0.0, и после выхода релиза будет казаться, что «уже установлена последняя версия».
+# Возвращает 0: отличаются, стоит обновить; 1: совпадают; 2: не удалось скачать официальный файл, сравнение невозможно
+snell_binary_differs_from_release() {   # <ветка> <версия>
     local version="$1" resolved="$2" target tmp_dir rc=2
     target=$(snell_binary_for_version "$version")
     [ -x "$target" ] || return 0
@@ -800,8 +800,8 @@ snell_binary_differs_from_release() {   # <通道> <版本号>
     return $rc
 }
 
-# 下载指定通道的二进制到版本化路径。force=true 时即使已存在也重新下载。
-# 只往 stderr 打印进度，stdout 留给调用方使用。
+# Скачивание бинарного файла указанной ветки по версионированному пути. При force=true скачивает заново, даже если файл уже существует.
+# Прогресс выводится только в stderr, stdout остаётся для вызывающей стороны.
 install_snell_binary_for_version() {
     local version="$1"
     local force="${2:-false}"
@@ -815,7 +815,7 @@ install_snell_binary_for_version() {
     local resolved
     resolved=$(resolve_latest_version_for_channel "$version")
     if [ -z "$resolved" ]; then
-        echo -e "${RED}无法确定 Snell ${version} 的版本号${RESET}" >&2
+        echo -e "${RED}Не удалось определить номер версии для Snell ${version}${RESET}" >&2
         return 1
     fi
 
@@ -826,31 +826,31 @@ install_snell_binary_for_version() {
         return 1
     fi
 
-    # install 是原子替换，正在运行的旧进程持有旧 inode，不受影响
+    # install выполняет атомарную замену: запущенный старый процесс удерживает старый inode и не затрагивается
     if ! install -m 755 "${tmp_dir}/snell-server" "$target"; then
-        echo -e "${RED}写入 ${target} 失败${RESET}" >&2
+        echo -e "${RED}Ошибка записи в ${target}${RESET}" >&2
         rm -rf "$tmp_dir"
         return 1
     fi
     rm -rf "$tmp_dir"
 
-    # 落盘后核验：装进来的确实是这个通道
+    # Проверка после сохранения на диск: убеждаемся, что установлена именно эта ветка
     local actual
     actual=$(probe_snell_binary_version "$target")
     if [ "$actual" != "$version" ]; then
-        echo -e "${YELLOW}警告：${target} 自报版本为 ${actual}，与预期的 ${version} 不一致${RESET}" >&2
+        echo -e "${YELLOW}Предупреждение: ${target} сообщает версию ${actual}, что не совпадает с ожидаемой ${version}${RESET}" >&2
     fi
 
-    echo -e "${GREEN}✓ Snell ${version} (${resolved}) 已就位: ${target}${RESET}" >&2
+    echo -e "${GREEN}✓ Snell ${version} (${resolved}) установлен: ${target}${RESET}" >&2
     return 0
 }
 
-# 确保指定通道可用，缺失时自动下载
+# Проверка доступности указанной ветки; при отсутствии — автоматическое скачивание
 ensure_snell_binary() {
     install_snell_binary_for_version "$1" "false"
 }
 
-# 主服务应使用的二进制路径（标记缺失或二进制未就位时回落到软链）
+# Путь к бинарному файлу для основной службы (при отсутствии маркера или бинарника — откат к симлинку)
 main_snell_binary() {
     local version target
     version=$(get_conf_snell_version "$SNELL_CONF_FILE")
@@ -862,8 +862,8 @@ main_snell_binary() {
     fi
 }
 
-# 把 unit 的 ExecStart 从裸 snell-server 切到版本化二进制。
-# 已经是版本化路径的会被跳过（模式带尾随空格，不会命中 snell-server-v5），因此可重复执行。
+# Переключение ExecStart в юните с обычного snell-server на версионированный бинарный файл.
+# Уже использующие версионированный путь пропускаются (шаблон содержит пробел в конце и не совпадёт с snell-server-v5), поэтому функцию можно вызывать повторно.
 sync_service_units_to_versioned_binary() {
     local changed=false
     local conf_file port unit version target
@@ -900,11 +900,11 @@ sync_service_units_to_versioned_binary() {
 
     if [ "$changed" = "true" ]; then
         systemctl daemon-reload 2>/dev/null || true
-        echo -e "${GREEN}✓ systemd 服务已切换到版本化二进制路径${RESET}"
+        echo -e "${GREEN}✓ Службы systemd переключены на пути с версионированными бинарными файлами${RESET}"
     fi
 }
 
-# 把一个 unit 的 ExecStart 指到目标通道的二进制（用于切换用户版本）
+# Направление ExecStart юнита на бинарный файл целевой ветки (используется при переключении версии пользователя)
 point_service_unit_to_version() {
     local unit="$1"
     local version="$2"
@@ -917,8 +917,8 @@ point_service_unit_to_version() {
     sed -i -E "s|ExecStart=${INSTALL_DIR}/snell-server(-v[456])? |ExecStart=${target} |" "$unit"
 }
 
-# 老布局（唯一的 /usr/local/bin/snell-server 实体文件）迁移到按通道分开存。
-# 幂等：已经是软链且配置都带标记时，什么都不做。
+# Миграция со старой структуры (единственный реальный файл /usr/local/bin/snell-server) на раздельное хранение по веткам.
+# Идемпотентно: если это уже симлинк и все конфиги размечены маркерами, ничего не делает.
 migrate_snell_binary_layout() {
     local snell_bin="${INSTALL_DIR}/snell-server"
     local main_version=""
@@ -927,21 +927,21 @@ migrate_snell_binary_layout() {
         local detected versioned
         detected=$(probe_snell_binary_version "$snell_bin")
         if [ "$detected" = "unknown" ]; then
-            echo -e "${YELLOW}无法识别 ${snell_bin} 的版本，跳过二进制布局迁移${RESET}"
+            echo -e "${YELLOW}Не удалось определить версию ${snell_bin}, миграция структуры бинарных файлов пропущена${RESET}"
             return 1
         fi
 
         versioned=$(snell_binary_for_version "$detected")
-        echo -e "${CYAN}检测到旧的单版本布局，正在迁移为多版本布局...${RESET}"
+        echo -e "${CYAN}Обнаружена старая одноверсионная структура, выполняется миграция на мультиверсионную...${RESET}"
         if [ ! -e "$versioned" ]; then
             if ! cp -a "$snell_bin" "$versioned"; then
-                echo -e "${RED}复制二进制到 ${versioned} 失败，已保留原布局${RESET}"
+                echo -e "${RED}Не удалось скопировать бинарный файл в ${versioned}, сохранена исходная структура${RESET}"
                 return 1
             fi
         fi
         chmod 755 "$versioned" 2>/dev/null || true
         ln -sfn "$versioned" "$snell_bin"
-        echo -e "${GREEN}✓ ${snell_bin} 现在指向 ${versioned}（Snell ${detected}）${RESET}"
+        echo -e "${GREEN}✓ ${snell_bin} теперь указывает на ${versioned} (Snell ${detected})${RESET}"
         main_version="$detected"
     elif [ -L "$snell_bin" ]; then
         main_version=$(probe_snell_binary_version "$snell_bin")
@@ -949,7 +949,7 @@ migrate_snell_binary_layout() {
 
     [ "$main_version" = "unknown" ] && main_version=""
 
-    # 给还没有版本标记的配置补上（老安装里所有用户必然同版本）
+    # Добавление маркера версии в конфиги, где его ещё нет (в старой установке все пользователи неизбежно имели одну версию)
     if [ -n "$main_version" ] && [ -d "${SNELL_CONF_DIR}/users" ]; then
         local conf_file
         for conf_file in "${SNELL_CONF_DIR}/users"/*.conf; do
@@ -958,7 +958,7 @@ migrate_snell_binary_layout() {
                 continue
             fi
             if set_conf_snell_version "$conf_file" "$main_version"; then
-                echo -e "${GREEN}✓ 已为 $(basename "$conf_file") 标记版本 ${main_version}${RESET}"
+                echo -e "${GREEN}✓ Для $(basename "$conf_file") отмечена версия ${main_version}${RESET}"
             fi
         done
     fi
@@ -985,7 +985,7 @@ ensure_snell_config_dir() {
         chown -R "${SNELL_SERVICE_USER}:${SNELL_SERVICE_GROUP}" "${SNELL_CONF_DIR}" 2>/dev/null || true
     fi
     chmod 755 "${SNELL_CONF_DIR}" "${SNELL_CONF_DIR}/users" 2>/dev/null || true
-    # 存有 PSK 的配置文件仅属主可读写
+    # Конфигурационные файлы с PSK доступны для чтения и записи только владельцу
     find "${SNELL_CONF_DIR}/users" -maxdepth 1 -name "*.conf" -exec chmod 600 {} + 2>/dev/null || true
 }
 
@@ -1002,21 +1002,21 @@ migrate_legacy_main_config_if_needed() {
             chown "${SNELL_SERVICE_USER}:${SNELL_SERVICE_GROUP}" "$SNELL_CONF_FILE" 2>/dev/null || true
         fi
         chmod 644 "$SNELL_CONF_FILE"
-        echo -e "${GREEN}已将旧配置迁移到 ${SNELL_CONF_FILE}${RESET}"
+        echo -e "${GREEN}Старая конфигурация перенесена в ${SNELL_CONF_FILE}${RESET}"
         return 0
     fi
 
     return 1
 }
 
-# 获取所有 Snell 用户配置
+# Получение конфигураций всех пользователей Snell
 get_all_snell_users() {
-    # 检查用户配置目录是否存在
+    # Проверка существования каталога конфигураций пользователей
     if [ ! -d "${SNELL_CONF_DIR}/users" ]; then
         return 1
     fi
     
-    # 首先获取主用户配置
+    # Сначала получаем конфигурацию основного пользователя
     local main_port=""
     local main_psk=""
     if [ -f "${SNELL_CONF_DIR}/users/snell-main.conf" ]; then
@@ -1027,7 +1027,7 @@ get_all_snell_users() {
         fi
     fi
     
-    # 获取其他用户配置
+    # Получаем конфигурации остальных пользователей
     for user_conf in "${SNELL_CONF_DIR}/users"/snell-*.conf; do
         if [ -f "$user_conf" ] && [[ "$user_conf" != *"snell-main.conf" ]]; then
             local port=$(grep -E '^listen' "$user_conf" | sed -n 's/^[[:space:]]*listen[[:space:]]*=.*:\([0-9][0-9]*\).*/\1/p')
@@ -1040,9 +1040,9 @@ get_all_snell_users() {
 }
 
 # =========================================
-# Snell 版本管理：按通道更新 / 追加通道 / 切换用户通道
+# Управление версиями Snell: обновление по веткам / добавление веток / переключение ветки пользователя
 # =========================================
-# 读取某通道二进制自报的具体版本号（如 v5.0.1）
+# Чтение конкретного номера версии, сообщаемого бинарным файлом ветки (например, v5.0.1)
 get_channel_binary_version() {
     local version="$1"
     local binary
@@ -1052,7 +1052,7 @@ get_channel_binary_version() {
     local detail
     detail=$("$binary" --v 2>&1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9]*' | head -n 1)
     if [ -z "$detail" ]; then
-        # 早期 v4 的 --v 不打印版本号，用内置常量兜底
+        # Ранние сборки v4 не выводят номер версии через --v, используем встроенную константу
         case "$version" in
             v4) detail="$SNELL_V4_FALLBACK" ;;
             v5) detail="$SNELL_V5_FALLBACK" ;;
@@ -1062,13 +1062,13 @@ get_channel_binary_version() {
     echo "$detail"
 }
 
-# 重启服务并确认真的起来了；起不来打印日志尾部，不让用户自己翻
+# Перезапуск службы и проверка, что она действительно запустилась; при сбое выводит конец журнала, чтобы пользователю не пришлось искать вручную
 restart_and_verify_service() {
     local service="$1"
     local waited=0
 
     if ! systemctl restart "$service" 2>/dev/null; then
-        echo -e "${RED}systemctl restart ${service} 返回失败${RESET}"
+        echo -e "${RED}Команда systemctl restart ${service} завершилась с ошибкой${RESET}"
         journalctl -u "$service" -n 30 --no-pager 2>/dev/null | sed 's/^/   /'
         return 1
     fi
@@ -1077,7 +1077,7 @@ restart_and_verify_service() {
         if systemctl is-active --quiet "$service"; then
             return 0
         fi
-        # socket 激活场景下主服务按需拉起，socket 活着即视为正常
+        # При активации по сокету основная служба поднимается по требованию; если активен сокет — считаем, что всё в порядке
         if [ "$service" = "snell" ] && systemctl is-active --quiet snell.socket; then
             return 0
         fi
@@ -1085,12 +1085,12 @@ restart_and_verify_service() {
         waited=$((waited + 1))
     done
 
-    echo -e "${RED}${service} 在 ${waited} 秒内未进入 active 状态${RESET}"
+    echo -e "${RED}Служба ${service} не перешла в состояние active в течение ${waited} сек.${RESET}"
     journalctl -u "$service" -n 30 --no-pager 2>/dev/null | sed 's/^/   /'
     return 1
 }
 
-# 写用户的 systemd 单元，ExecStart 指向该用户所选通道的二进制
+# Запись юнита systemd для пользователя, ExecStart указывает на бинарный файл выбранной пользователем ветки
 write_user_service_unit() {
     local port="$1"
     local user_conf="$2"
@@ -1119,8 +1119,8 @@ WantedBy=multi-user.target
 EOF
 }
 
-# 切换/回滚用的备份统一放在 ${SNELL_CONF_DIR}/backup 下。
-# 不能放进 users/ —— 多处循环是按 users/* 遍历的，备份文件会被当成真实用户。
+# Резервные копии для переключения/отката централизованно хранятся в ${SNELL_CONF_DIR}/backup.
+# Их нельзя помещать в users/ — многие циклы перебирают users/*, и файлы бэкапов будут приняты за реальных пользователей.
 snell_backup_path() {
     local src="$1"
     local stamp="$2"
@@ -1129,8 +1129,8 @@ snell_backup_path() {
     echo "${dir}/$(basename "$src").${stamp}"
 }
 
-# === 新增：备份和还原配置函数 ===
-# 备份 Snell 配置（只保留最近 10 个备份，避免越积越多）
+# === Добавлено: функции резервного копирования и восстановления конфигурации ===
+# Резервное копирование конфигурации Snell (хранятся только последние 10 копий во избежание накопления)
 backup_snell_config() {
     local backup_dir="${SNELL_CONF_DIR}/backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
@@ -1141,12 +1141,12 @@ backup_snell_config() {
 
 
 
-# ShadowTLS 自己的路径
+# Собственные пути ShadowTLS
 CONFIG_DIR="/etc/shadowtls"
 SERVICE_FILE="${SYSTEMD_DIR}/shadowtls.service"
 
-# 监听地址：内核能双栈（有 IPv6、bindv6only=0）时监听 ::0，IPv4、IPv6 都收；
-# IPv6 关掉了或 bindv6only=1 时 ::0 收不到 IPv4（ss-2022 issue #13），有 IPv4 就监听 0.0.0.0
+# Адрес прослушивания: если ядро поддерживает dual-stack (есть IPv6 и bindv6only=0), слушаем ::0 (принимает и IPv4, и IPv6);
+# если IPv6 отключён или bindv6only=1, то ::0 не принимает IPv4 (ss-2022 issue #13) — при наличии IPv4 слушаем 0.0.0.0
 stls_listen_addr() {
     local v6=0 v4=0
     [ -f /proc/net/if_inet6 ] && v6=1
@@ -1158,15 +1158,15 @@ stls_listen_addr() {
     fi
 }
 
-# 从服务文件（或标准输入）里读 shadow-tls 的参数，不管监听地址写的是 ::0、0.0.0.0 还是手改过的
-# （sed 而不是 grep -P：BusyBox 的 grep 没有 -P）
+# Чтение параметров shadow-tls из файла службы (или stdin), независимо от того, указан ли адрес ::0, 0.0.0.0 или изменён вручную
+# (используется sed вместо grep -P: в grep из BusyBox нет флага -P)
 stls_listen_port() { sed -n 's/.*--listen [^ ]*:\([0-9][0-9]*\).*/\1/p' "$@" | head -n 1; }
-stls_opt() {   # <参数名> [文件]：--<参数名> 后面的值
+stls_opt() {   # <имя_параметра> [файл]: значение после --<имя_параметра>
     local k="$1"; shift
     sed -n "s/.*--${k} \([^ ][^ ]*\).*/\1/p" "$@" | head -n 1
 }
 
-# 后端端口 -> v6 的 mode（客户端必须与服务端一致）
+# Порт бэкенда -> mode для v6 (на клиенте должен совпадать с сервером)
 get_port_snell_mode() {
     local conf_file mode=""
     conf_file=$(snell_conf_for_port "$1")
@@ -1176,7 +1176,7 @@ get_port_snell_mode() {
     echo "${mode:-default}"
 }
 
-# 生成一个后端端口对应的 Surge 代理行（含 ShadowTLS 参数）
+# Генерация строки прокси Surge для порта бэкенда (включая параметры ShadowTLS)
 print_snell_shadowtls_line() {
     local label="$1"
     local server_ip="$2"
@@ -1204,35 +1204,35 @@ print_snell_shadowtls_line() {
     esac
 }
 
-# 安装必要的工具
+# Установка необходимых утилит
 install_requirements() {
     ensure_cmds wget curl jq || exit 1
 }
 
-# 获取最新版本
+# Получение последней версии
 SHADOWTLS_FALLBACK_VERSION="v0.2.25"
 
 get_latest_version() {
     local latest_version=""
 
-    # 优先走 API；失败时 jq 可能返回 "null"
+    # Приоритет через API; при ошибке jq может вернуть "null"
     latest_version=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/ihciah/shadow-tls/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null)
 
-    # API 异常（如限流）时，回退到 releases/latest 的重定向结果
+    # При сбое API (например, превышении лимита запросов) — откат к результату перенаправления releases/latest
     if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
         latest_version=$(curl -fsSL --connect-timeout 10 -o /dev/null -w '%{url_effective}' "https://github.com/ihciah/shadow-tls/releases/latest" 2>/dev/null | sed -E 's#.*/tag/##')
     fi
 
-    # 两次均失败时，使用内置的已知可用版本
+    # Если обе попытки не удались, используем встроенную проверенную версию
     if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
-        echo -e "${YELLOW}无法从 GitHub 获取最新版本，使用内置版本 ${SHADOWTLS_FALLBACK_VERSION}${RESET}" >&2
+        echo -e "${YELLOW}Не удалось получить последнюю версию с GitHub, используется встроенная версия ${SHADOWTLS_FALLBACK_VERSION}${RESET}" >&2
         latest_version="$SHADOWTLS_FALLBACK_VERSION"
     fi
 
     echo "$latest_version"
 }
 
-# 检查 SS 是否已安装
+# Проверка, установлен ли SS
 check_ssrust() {
     if [ ! -f "/usr/local/bin/ss-rust" ]; then
         return 1
@@ -1240,7 +1240,7 @@ check_ssrust() {
     return 0
 }
 
-# 检查 Snell 是否已安装
+# Проверка, установлен ли Snell
 check_snell() {
     if [ ! -f "/usr/local/bin/snell-server" ]; then
         return 1
@@ -1261,7 +1261,7 @@ migrate_legacy_snell_config() {
             chown "${SNELL_SERVICE_USER}:${SNELL_SERVICE_GROUP}" "${SNELL_CONF_FILE}" 2>/dev/null || true
         fi
         chmod 644 "${SNELL_CONF_FILE}"
-        echo -e "${GREEN}已将旧 Snell 配置迁移到 ${SNELL_CONF_FILE}${RESET}"
+        echo -e "${GREEN}Старая конфигурация Snell перенесена в ${SNELL_CONF_FILE}${RESET}"
         return 0
     fi
 
@@ -1276,25 +1276,25 @@ check_snell_config() {
     migrate_legacy_snell_config || true
 
     if [ ! -s "${SNELL_CONF_FILE}" ]; then
-        echo -e "${RED}Snell 主配置不存在: ${SNELL_CONF_FILE}${RESET}"
-        echo -e "${YELLOW}请先运行 Snell 安装/修复，或将旧配置 ${OLD_SNELL_CONF_FILE} 迁移到 users 目录。${RESET}"
+        echo -e "${RED}Основная конфигурация Snell не существует: ${SNELL_CONF_FILE}${RESET}"
+        echo -e "${YELLOW}Сначала запустите установку/восстановление Snell или перенесите старую конфигурацию ${OLD_SNELL_CONF_FILE} в каталог users.${RESET}"
         return 1
     fi
 
     if ! grep -Eq '^[[:space:]]*listen[[:space:]]*=' "${SNELL_CONF_FILE}"; then
-        echo -e "${RED}Snell 主配置缺少 listen: ${SNELL_CONF_FILE}${RESET}"
+        echo -e "${RED}В основной конфигурации Snell отсутствует параметр listen: ${SNELL_CONF_FILE}${RESET}"
         return 1
     fi
 
     if ! grep -Eq '^[[:space:]]*psk[[:space:]]*=' "${SNELL_CONF_FILE}"; then
-        echo -e "${RED}Snell 主配置缺少 psk: ${SNELL_CONF_FILE}${RESET}"
+        echo -e "${RED}В основной конфигурации Snell отсутствует параметр psk: ${SNELL_CONF_FILE}${RESET}"
         return 1
     fi
 
     return 0
 }
 
-# 获取 SS 端口
+# Получение порта SS
 get_ssrust_port() {
     local ssrust_conf="/etc/ss-rust/config.json"
     if [ ! -f "$ssrust_conf" ]; then
@@ -1304,7 +1304,7 @@ get_ssrust_port() {
     echo "$port"
 }
 
-# 获取 SS 密码
+# Получение пароля SS
 get_ssrust_password() {
     local ssrust_conf="/etc/ss-rust/config.json"
     if [ ! -f "$ssrust_conf" ]; then
@@ -1314,7 +1314,7 @@ get_ssrust_password() {
     echo "$password"
 }
 
-# 获取 SS 加密方式
+# Получение метода шифрования SS
 get_ssrust_method() {
     local ssrust_conf="/etc/ss-rust/config.json"
     if [ ! -f "$ssrust_conf" ]; then
@@ -1324,7 +1324,7 @@ get_ssrust_method() {
     echo "$method"
 }
 
-# 获取 Snell PSK
+# Получение PSK для Snell
 get_snell_psk() {
     local snell_conf="${SNELL_CONF_FILE}"
     migrate_legacy_snell_config >/dev/null 2>&1 || true
@@ -1335,7 +1335,7 @@ get_snell_psk() {
     echo "$psk"
 }
 
-# 获取 Snell 配置
+# Получение конфигурации Snell
 get_snell_config() {
     local port=$1
     local snell_conf="${USERS_DIR}/snell-${port}.conf"
@@ -1400,30 +1400,30 @@ restrict_snell_to_loopback() {
     local service_name
 
     conf=$(get_snell_config_file_by_port "$port") || {
-        echo -e "${RED}未找到 Snell 端口 ${port} 对应的配置文件${RESET}"
+        echo -e "${RED}Не найден конфигурационный файл для порта Snell ${port}${RESET}"
         return 1
     }
 
     service_name=$(get_snell_service_name_by_config "$conf") || {
-        echo -e "${RED}无法识别 Snell 端口 ${port} 对应的 systemd 服务${RESET}"
+        echo -e "${RED}Не удалось определить службу systemd для порта Snell ${port}${RESET}"
         return 1
     }
 
     if [ "$service_name" = "snell" ] && { systemctl is-active --quiet snell.socket 2>/dev/null || systemctl is-enabled --quiet snell.socket 2>/dev/null; }; then
-        echo -e "${RED}检测到 snell.socket 正在使用，暂不能自动将主 Snell 改为 ShadowTLS 后端模式${RESET}"
-        echo -e "${YELLOW}请先在 Snell 管理脚本中关闭出口控制/socket 激活模式，再配置 ShadowTLS。${RESET}"
+        echo -e "${RED}Обнаружено использование snell.socket, автоматическое переключение основного Snell в режим бэкенда ShadowTLS пока невозможно${RESET}"
+        echo -e "${YELLOW}Сначала отключите управление исходящим трафиком / режим активации по сокету в скрипте управления Snell, а затем настройте ShadowTLS.${RESET}"
         return 1
     fi
 
     if grep -Eq "^[[:space:]]*listen[[:space:]]*=[[:space:]]*127\\.0\\.0\\.1:${port}[[:space:]]*$" "$conf"; then
-        echo -e "${GREEN}Snell 端口 ${port} 已仅监听 127.0.0.1${RESET}"
+        echo -e "${GREEN}Порт Snell ${port} уже прослушивает только 127.0.0.1${RESET}"
     else
-        # 备份放 /etc/snell/backup：不能放进 users/，那里每个文件都会被当成一个用户
+        # Бэкапы сохраняются в /etc/snell/backup: нельзя класть в users/, так как каждый файл там воспринимается как отдельный пользователь
         cp -a "$conf" "$(snell_backup_path "$conf" "$(date +%Y%m%d%H%M%S)")"
         sed -i "s|^[[:space:]]*listen[[:space:]]*=.*:${port}[[:space:]]*$|listen = 127.0.0.1:${port}|" "$conf"
 
         if ! grep -Eq "^[[:space:]]*listen[[:space:]]*=[[:space:]]*127\\.0\\.0\\.1:${port}[[:space:]]*$" "$conf"; then
-            echo -e "${RED}修改 Snell 监听地址失败: ${conf}${RESET}"
+            echo -e "${RED}Не удалось изменить адрес прослушивания Snell: ${conf}${RESET}"
             return 1
         fi
 
@@ -1432,17 +1432,17 @@ restrict_snell_to_loopback() {
         fi
         chmod 644 "$conf" 2>/dev/null || true
 
-        echo -e "${GREEN}已将 Snell 端口 ${port} 改为仅监听 127.0.0.1${RESET}"
+        echo -e "${GREEN}Порт Snell ${port} переключён на прослушивание только 127.0.0.1${RESET}"
     fi
 
     systemctl restart "$service_name"
     close_port "$port"
-    echo -e "${GREEN}已关闭 Snell 原始端口 ${port} 的公网放行规则，客户端请连接 ShadowTLS 端口${RESET}"
+    echo -e "${GREEN}Правила публичного доступа для исходного порта Snell ${port} закрыты; подключайтесь клиентом к порту ShadowTLS${RESET}"
 }
 
-# 获取指定后端端口的 Snell 大版本号（4 / 5 / 6）
-# 不传端口时退回主用户端口。原实现只认 v4/v5，且对所有端口给同一个答案，
-# 在多版本共存下会把 v6 端口误报成 v4。
+# Получение основного номера версии Snell (4 / 5 / 6) для указанного порта бэкенда.
+# Если порт не передан, используется порт основного пользователя. Старая реализация распознавала только v4/v5 и выдавала один ответ для всех портов,
+# из-за чего при сосуществовании нескольких версий порт v6 ошибочно определялся как v4.
 get_snell_version() {
     local port="${1:-$(get_snell_port)}"
     local version
@@ -1461,79 +1461,79 @@ get_snell_version() {
     esac
 }
 
-# 获取服务器IP
+# Получение IP-адреса сервера
 get_server_ip() {
     local ipv4
     local ipv6
     
-    # 获取IPv4地址
+    # Получение IPv4-адреса
     ipv4=$(curl -s -4 ip.sb 2>/dev/null)
     
-    # 获取IPv6地址
+    # Получение IPv6-адреса
     ipv6=$(curl -s -6 ip.sb 2>/dev/null)
     
-    # 判断IP类型并返回
+    # Определение типа IP и возврат значения
     if [ -n "$ipv4" ] && [ -n "$ipv6" ]; then
-        # 双栈，优先返回IPv4
+        # Dual-stack, приоритет отдаётся IPv4
         echo "$ipv4"
     elif [ -n "$ipv4" ]; then
-        # 仅IPv4
+        # Только IPv4
         echo "$ipv4"
     elif [ -n "$ipv6" ]; then
-        # 仅IPv6
+        # Только IPv6
         echo "$ipv6"
     else
-        echo -e "${RED}无法获取服务器 IP${RESET}"
+        echo -e "${RED}Не удалось получить IP-адрес сервера${RESET}"
         return 1
     fi
     
     return 0
 }
 
-# 检查 shadow-tls 命令格式
+# Проверка формата команды shadow-tls
 check_shadowtls_command() {
     local help_output
     help_output=$($INSTALL_DIR/shadow-tls --help 2>&1)
-    echo -e "${YELLOW}Shadow-tls 帮助信息：${RESET}"
+    echo -e "${YELLOW}Справка по shadow-tls:${RESET}"
     echo "$help_output"
     return 0
 }
 
-# 生成安全的Base64编码
+# Генерация безопасного Base64-кодирования (URL-safe)
 urlsafe_base64() {
     date=$(echo -n "$1"|base64|sed ':a;N;s/\n/ /g;ta'|sed 's/ //g;s/=//g;s/+/-/g;s/\//_/g')
     echo -e "${date}"
 }
 
-# 生成随机端口
+# Генерация случайного порта
 generate_random_port() {
     local min_port=10000
     local max_port=65535
     echo $(shuf -i ${min_port}-${max_port} -n 1)
 }
 
-# 检查端口是否被占用
+# Проверка, занят ли порт
 check_port_usage() {
     local port=$1
 
     if command -v ss >/dev/null 2>&1; then
         if ss -tuln | grep -q ":${port}\b"; then
-            return 0  # 端口被占用
+            return 0  # Порт занят
         fi
     elif command -v netstat >/dev/null 2>&1; then
         if netstat -tuln | grep -q ":${port}\b"; then
-            return 0  # 端口被占用
+            return 0  # Порт занят
         fi
     fi
 
-    return 1     # 端口未被占用
+    return 1     # Порт свободен
 }
 
-# 获取已使用的 ShadowTLS 端口
+# Получение уже используемых портов ShadowTLS
 get_used_stls_ports() {
     local used_ports=()
     
-    # 检查 SS 服务
+    # Проверка службы SS
     local ss_service="${SYSTEMD_DIR}/shadowtls-ss.service"
     if [ -f "$ss_service" ]; then
         local ss_port=$(stls_listen_port "$ss_service")
@@ -1542,7 +1542,7 @@ get_used_stls_ports() {
         fi
     fi
     
-    # 检查 Snell 服务
+    # Проверка служб Snell
     local snell_services=$(find /etc/systemd/system -name "shadowtls-snell-*.service" 2>/dev/null)
     if [ ! -z "$snell_services" ]; then
         while IFS= read -r service_file; do
@@ -1556,30 +1556,30 @@ get_used_stls_ports() {
     echo "${used_ports[@]}"
 }
 
-# 验证并获取可用端口
+# Проверка и получение доступного порта
 get_available_port() {
     local port=$1
     local used_ports=($(get_used_stls_ports))
     
-    # 如果用户指定了端口
+    # Если пользователь указал порт
     if [ ! -z "$port" ]; then
-        # 先校验端口为 1-65535 的纯数字，防止非法值或注入
+        # Сначала проверяем, что порт — это число от 1 до 65535, для защиты от некорректных значений или инъекций
         if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-            echo -e "${RED}端口不合法，请输入 1-65535 的数字${RESET}" >&2
+            echo -e "${RED}Некорректный порт, введите число от 1 до 65535${RESET}" >&2
             return 1
         fi
 
-        # 检查端口是否已被 ShadowTLS 使用
+        # Проверка, используется ли порт другой службой ShadowTLS
         for used_port in "${used_ports[@]}"; do
             if [ "$port" = "$used_port" ]; then
-                echo -e "${RED}端口 ${port} 已被其他 ShadowTLS 服务使用${RESET}"
+                echo -e "${RED}Порт ${port} уже используется другой службой ShadowTLS${RESET}"
                 return 1
             fi
         done
         
-        # 检查端口是否被其他服务使用
+        # Проверка, занят ли порт другими службами
         if check_port_usage "$port"; then
-            echo -e "${RED}端口 ${port} 已被其他服务占用${RESET}"
+            echo -e "${RED}Порт ${port} уже занят другой службой${RESET}"
             return 1
         fi
         
@@ -1587,13 +1587,13 @@ get_available_port() {
         return 0
     fi
     
-    # 如果用户没有指定端口，生成随机端口
+    # Если пользователь не указал порт, генерируем случайный
     local attempts=0
     while [ $attempts -lt 10 ]; do
         local random_port=$(generate_random_port)
         local is_used=0
         
-        # 检查是否已被 ShadowTLS 使用
+        # Проверка, используется ли он в ShadowTLS
         for used_port in "${used_ports[@]}"; do
             if [ "$random_port" = "$used_port" ]; then
                 is_used=1
@@ -1601,7 +1601,7 @@ get_available_port() {
             fi
         done
         
-        # 如果端口未被使用且未被占用
+        # Если порт не используется и не занят
         if [ $is_used -eq 0 ] && ! check_port_usage "$random_port"; then
             echo "$random_port"
             return 0
@@ -1610,19 +1610,19 @@ get_available_port() {
         attempts=$((attempts + 1))
     done
     
-    echo -e "${RED}无法找到可用端口${RESET}"
+    echo -e "${RED}Не удалось найти свободный порт${RESET}"
     return 1
 }
 
-# 校验 TLS 伪装域名白名单（防 systemd unit 参数注入与换行注入）
+# Проверка домена маскировки TLS по белому списку (защита от инъекции параметров и переводов строк в юнит systemd)
 is_valid_tls_domain() {
     [[ "$1" =~ ^[A-Za-z0-9.-]{1,253}$ ]]
 }
 
-# 交互式读取 TLS 伪装域名，非法输入拒绝并要求重输
+# Интерактивное чтение домена маскировки TLS; некорректный ввод отклоняется с запросом повторного ввода
 prompt_tls_domain() {
     while true; do
-        read -rp "请输入 TLS 伪装域名 (直接回车默认为 www.microsoft.com): " tls_domain
+        read -rp "Введите домен маскировки TLS (нажмите Enter для www.microsoft.com по умолчанию): " tls_domain
         if [ -z "$tls_domain" ]; then
             tls_domain="www.microsoft.com"
             return 0
@@ -1630,11 +1630,11 @@ prompt_tls_domain() {
         if is_valid_tls_domain "$tls_domain"; then
             return 0
         fi
-        echo -e "${RED}域名格式非法：仅允许字母、数字、点号和连字符（最长 253 字符），请重新输入${RESET}"
+        echo -e "${RED}Неверный формат домена: разрешены только буквы, цифры, точки и дефисы (максимум 253 символа). Пожалуйста, введите заново${RESET}"
     done
 }
 
-# 生成 SS 链接和配置
+# Генерация ссылок и конфигурации SS
 generate_ss_links() {
     local server_ip=$1
     local listen_port=$2
@@ -1644,50 +1644,50 @@ generate_ss_links() {
     local stls_sni=$6
     local backend_port=$7
     
-    echo -e "\n${YELLOW}=== 服务器配置 ===${RESET}"
-    echo -e "服务器IP：${server_ip}"
-    echo -e "\nShadowsocks 配置："
-    echo -e "  - 端口：${backend_port}"
-    echo -e "  - 加密方式：${ssrust_method}"
-    echo -e "  - 密码：${ssrust_password}"
-    echo -e "\nShadowTLS 配置："
-    echo -e "  - 端口：${listen_port}"
-    echo -e "  - 密码：${stls_password}"
-    echo -e "  - SNI：${stls_sni}"
-    echo -e "  - 版本：3"
+    echo -e "\n${YELLOW}=== Конфигурация сервера ===${RESET}"
+    echo -e "IP сервера: ${server_ip}"
+    echo -e "\nКонфигурация Shadowsocks:"
+    echo -e "  - Порт: ${backend_port}"
+    echo -e "  - Метод шифрования: ${ssrust_method}"
+    echo -e "  - Пароль: ${ssrust_password}"
+    echo -e "\nКонфигурация ShadowTLS:"
+    echo -e "  - Порт: ${listen_port}"
+    echo -e "  - Пароль: ${stls_password}"
+    echo -e "  - SNI: ${stls_sni}"
+    echo -e "  - Версия: 3"
     
-    # 生成 SS + ShadowTLS 合并链接
+    # Генерация объединённой ссылки SS + ShadowTLS
     local userinfo=$(echo -n "${ssrust_method}:${ssrust_password}" | base64 | tr -d '\n')
     # shadow_tls_config = plugin=shadow-tls;host=${stls_sni};password=${stls_password};version=3
     local shadow_tls_config="plugin=shadow-tls;host=${stls_sni};password=${stls_password};version=3"
     local ss_url="ss://${userinfo}@${server_ip}:${listen_port}?${shadow_tls_config}"
 
-    echo -e "\n${YELLOW}=== Surge 配置 ===${RESET}"
+    echo -e "\n${YELLOW}=== Конфигурация Surge ===${RESET}"
     echo -e "SS-${server_ip} = ss, ${server_ip}, ${listen_port}, encrypt-method=${ssrust_method}, password=${ssrust_password}, shadow-tls-password=${stls_password}, shadow-tls-sni=${stls_sni}, shadow-tls-version=3, udp-relay=true"
     
-    echo -e "\n${YELLOW}=== Shadowrocket 配置说明 ===${RESET}"
-    echo -e "1. 添加 Shadowsocks 节点："
-    echo -e "   - 类型：Shadowsocks"
-    echo -e "   - 地址：${server_ip}"
-    echo -e "   - 端口：${backend_port}"
-    echo -e "   - 加密方法：${ssrust_method}"
-    echo -e "   - 密码：${ssrust_password}"
+    echo -e "\n${YELLOW}=== Инструкция по настройке Shadowrocket ===${RESET}"
+    echo -e "1. Добавьте узел Shadowsocks:"
+    echo -e "   - Тип: Shadowsocks"
+    echo -e "   - Адрес: ${server_ip}"
+    echo -e "   - Порт: ${backend_port}"
+    echo -e "   - Метод шифрования: ${ssrust_method}"
+    echo -e "   - Пароль: ${ssrust_password}"
     
-    echo -e "\n2. 添加 ShadowTLS 节点："
-    echo -e "   - 类型：ShadowTLS"
-    echo -e "   - 地址：${server_ip}"
-    echo -e "   - 端口：${listen_port}"
-    echo -e "   - 密码：${stls_password}"
-    echo -e "   - SNI：${stls_sni}"
-    echo -e "   - 版本：3"
+    echo -e "\n2. Добавьте узел ShadowTLS:"
+    echo -e "   - Тип: ShadowTLS"
+    echo -e "   - Адрес: ${server_ip}"
+    echo -e "   - Порт: ${listen_port}"
+    echo -e "   - Пароль: ${stls_password}"
+    echo -e "   - SNI: ${stls_sni}"
+    echo -e "   - Версия: 3"
 
-    echo -e "\n${YELLOW}=== Shadowrocket分享链接 ===${RESET}"
-    echo -e "${GREEN}SS + ShadowTLS 链接：${RESET}${ss_url}"
+    echo -e "\n${YELLOW}=== Ссылка для импорта в Shadowrocket ===${RESET}"
+    echo -e "${GREEN}Ссылка SS + ShadowTLS: ${RESET}${ss_url}"
     
-    echo -e "\n${YELLOW}=== Shadowrocket二维码 ===${RESET}"
+    echo -e "\n${YELLOW}=== QR-код для Shadowrocket ===${RESET}"
     qrencode -t UTF8 "${ss_url}"
     
-    echo -e "\n${YELLOW}=== Clash Meta 配置 ===${RESET}"
+    echo -e "\n${YELLOW}=== Конфигурация Clash Meta ===${RESET}"
     echo -e "proxies:"
     echo -e "  - name: SS-${server_ip}"
     echo -e "    type: ss"
@@ -1702,7 +1702,7 @@ generate_ss_links() {
     echo -e "      version: 3"
 }
 
-# 生成 Snell 链接和配置
+# Генерация ссылок и конфигурации Snell
 generate_snell_links() {
     local server_ip=$1
     local listen_port=$2
@@ -1711,51 +1711,51 @@ generate_snell_links() {
     local stls_sni=$5
     local backend_port=$6
     
-    # 版本取自这个后端端口自己的通道
+    # Версия берётся из собственной ветки этого порта бэкенда
     local snell_version=$(get_snell_version "$backend_port")
     
-    echo -e "\n${YELLOW}=== 服务器配置 ===${RESET}"
-    echo -e "服务器IP：${server_ip}"
-    echo -e "\nSnell 配置："
-    echo -e "  - 端口：${backend_port}"
-    echo -e "  - PSK：${snell_psk}"
-    echo -e "  - 版本：${snell_version}"
-    echo -e "\nShadowTLS 配置："
-    echo -e "  - 端口：${listen_port}"
-    echo -e "  - 密码：${stls_password}"
-    echo -e "  - SNI：${stls_sni}"
-    echo -e "  - 版本：3"
+    echo -e "\n${YELLOW}=== Конфигурация сервера ===${RESET}"
+    echo -e "IP сервера: ${server_ip}"
+    echo -e "\nКонфигурация Snell:"
+    echo -e "  - Порт: ${backend_port}"
+    echo -e "  - PSK: ${snell_psk}"
+    echo -e "  - Версия: ${snell_version}"
+    echo -e "\nКонфигурация ShadowTLS:"
+    echo -e "  - Порт: ${listen_port}"
+    echo -e "  - Пароль: ${stls_password}"
+    echo -e "  - SNI: ${stls_sni}"
+    echo -e "  - Версия: 3"
     
-    echo -e "\n${YELLOW}=== Surge 配置 ===${RESET}"
+    echo -e "\n${YELLOW}=== Конфигурация Surge ===${RESET}"
     
-    # v5 同时给出 v4/v5 两种写法；v6 需要额外带 mode
+    # Для v5 выводятся оба варианта записи (v4 и v5); для v6 дополнительно указывается параметр mode
     print_snell_shadowtls_line "Snell + ShadowTLS" "$server_ip" "$listen_port" "$snell_psk" \
         "$stls_password" "$stls_sni" "$backend_port"
 }
 
-# 询问是否开启 wildcard-sni（默认关闭）
+# Запрос на включение wildcard-sni (по умолчанию выключено)
 prompt_wildcard_sni() {
     wildcard_sni="off"
-    echo -e "${YELLOW}是否开启 wildcard-sni=authed？${RESET}"
-    echo -e "开启后已通过密码验证的客户端可使用与服务端不一致的伪装域名（SNI）"
-    read -rp "开启 wildcard-sni=authed? [y/N]: " wildcard_choice
+    echo -e "${YELLOW}Включить ли wildcard-sni=authed?${RESET}"
+    echo -e "После включения клиенты, прошедшие проверку пароля, смогут использовать домен маскировки (SNI), отличный от серверного"
+    read -rp "Включить wildcard-sni=authed? [y/N]: " wildcard_choice
     case "$wildcard_choice" in
         [yY]|[yY][eE][sS])
             wildcard_sni="authed"
-            echo -e "${GREEN}已开启 wildcard-sni=authed${RESET}"
+            echo -e "${GREEN}Включено: wildcard-sni=authed${RESET}"
             ;;
         *)
-            echo -e "${GREEN}保持默认（关闭 wildcard-sni）${RESET}"
+            echo -e "${GREEN}Оставлено значение по умолчанию (wildcard-sni выключен)${RESET}"
             ;;
     esac
 }
 
-# 启用 TCP Fast Open
+# Включение TCP Fast Open
 enable_tcp_fastopen() {
-    # 立即生效
+    # Немедленное применение
     sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1
 
-    # 持久化配置，重启后仍然生效
+    # Сохранение конфигурации, чтобы она действовала после перезагрузки
     if [ -d /etc/sysctl.d ]; then
         echo "net.ipv4.tcp_fastopen = 3" > /etc/sysctl.d/99-tcp-fastopen.conf
     elif ! grep -q "^net.ipv4.tcp_fastopen" /etc/sysctl.conf 2>/dev/null; then
@@ -1763,9 +1763,9 @@ enable_tcp_fastopen() {
     fi
 }
 
-# 创建服务文件的模板
+# Шаблон создания файла службы
 create_shadowtls_service() {
-    local service_type=$1  # ss 或 snell
+    local service_type=$1  # ss или snell
     local port=$2
     local listen_port=$3
     local tls_domain=$4
@@ -1784,10 +1784,10 @@ create_shadowtls_service() {
         identifier="shadow-tls-snell-${port}"
     fi
 
-    # 启用 TCP Fast Open（内核参数）
+    # Включение TCP Fast Open (параметр ядра)
     enable_tcp_fastopen
 
-    # wildcard-sni 参数（默认 off，不附加）
+    # Параметр wildcard-sni (по умолчанию off, не добавляется)
     local wildcard_sni_flag=""
     if [ "$wildcard_sni" = "authed" ] || [ "$wildcard_sni" = "all" ]; then
         wildcard_sni_flag=" --wildcard-sni ${wildcard_sni}"
@@ -1813,7 +1813,7 @@ SyslogIdentifier=${identifier}
 Restart=always
 RestartSec=3
 
-# 性能优化参数
+# Параметры оптимизации производительности
 LimitNOFILE=65535
 CPUAffinity=0
 Nice=0
@@ -1832,7 +1832,7 @@ ProtectHome=yes
 PrivateTmp=yes
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
-# 系统优化参数
+# Параметры системной оптимизации
 Environment=RUST_THREADS=1
 Environment=MONOIO_FORCE_LEGACY_DRIVER=1
 Environment=RUST_LOG_LEVEL=info
@@ -1844,61 +1844,61 @@ Environment=RUST_LOG_FILTER=info,shadow_tls=info
 WantedBy=multi-user.target
 EOF
 
-    # 创建日志文件并设置权限
+    # Создание лог-файла и установка прав доступа
     touch "/var/log/shadowtls-${identifier}.log"
     chmod 640 "/var/log/shadowtls-${identifier}.log"
     chown root:root "/var/log/shadowtls-${identifier}.log"
 }
 
-# 启动服务并验证运行状态；失败时报错并提示 journalctl，不再静默吞掉错误
+# Запуск службы и проверка статуса работы; при сбое выводит ошибку и подсказку journalctl, больше не подавляя ошибки молча
 start_and_verify_service() {
     local unit="$1"
-    # unit 文件刚写入，先 reload 让 systemd 感知
+    # Файл юнита только что записан, сначала делаем reload, чтобы systemd его увидел
     systemctl daemon-reload 2>/dev/null
     if ! systemctl start "$unit"; then
-        echo -e "${RED}服务 ${unit} 启动失败${RESET}"
-        echo -e "${YELLOW}请执行 journalctl -u ${unit} 查看详细错误${RESET}"
+        echo -e "${RED}Не удалось запустить службу ${unit}${RESET}"
+        echo -e "${YELLOW}Выполните journalctl -u ${unit} для просмотра подробной информации об ошибке${RESET}"
         return 1
     fi
     if ! systemctl enable "$unit" 2>/dev/null; then
-        echo -e "${YELLOW}服务 ${unit} 设置开机自启失败，可手动执行 systemctl enable ${unit}${RESET}"
+        echo -e "${YELLOW}Не удалось включить автозапуск для службы ${unit}, вы можете выполнить systemctl enable ${unit} вручную${RESET}"
     fi
     if ! systemctl is-active --quiet "$unit"; then
-        echo -e "${RED}服务 ${unit} 启动后未能保持运行${RESET}"
-        echo -e "${YELLOW}请执行 journalctl -u ${unit} 查看详细错误${RESET}"
+        echo -e "${RED}Служба ${unit} не смогла продолжить работу после запуска${RESET}"
+        echo -e "${YELLOW}Выполните journalctl -u ${unit} для просмотра подробной информации об ошибке${RESET}"
         return 1
     fi
     return 0
 }
 
-# 安装 ShadowTLS
+# Установка ShadowTLS
 install_shadowtls() {
-    echo -e "${CYAN}正在安装 ShadowTLS...${RESET}"
+    echo -e "${CYAN}Установка ShadowTLS...${RESET}"
 
     install_requirements
     
-    # 检测已安装的协议
+    # Определение установленных протоколов
     local has_ss=false
     local has_snell=false
     
     if check_ssrust; then
         has_ss=true
-        echo -e "${GREEN}检测到已安装 Shadowsocks Rust${RESET}"
+        echo -e "${GREEN}Обнаружен установленный Shadowsocks Rust${RESET}"
     fi
     
     if check_snell_config; then
         has_snell=true
-        echo -e "${GREEN}检测到已安装 Snell${RESET}"
+        echo -e "${GREEN}Обнаружен установленный Snell${RESET}"
     elif check_snell; then
-        echo -e "${YELLOW}检测到 Snell 二进制，但主配置不可用，暂不能为 Snell 配置 ShadowTLS${RESET}"
+        echo -e "${YELLOW}Обнаружен бинарный файл Snell, но основная конфигурация недоступна; настройка ShadowTLS для Snell пока невозможна${RESET}"
     fi
     
     if ! $has_ss && ! $has_snell; then
-        echo -e "${RED}未检测到 Shadowsocks Rust 或 Snell，请先安装其中一个${RESET}"
+        echo -e "${RED}Не обнаружен ни Shadowsocks Rust, ни Snell. Пожалуйста, сначала установите один из них${RESET}"
         return 1
     fi
     
-    # 获取系统架构并下载安装 ShadowTLS
+    # Определение архитектуры системы, скачивание и установка ShadowTLS
     arch=$(uname -m)
     case $arch in
         x86_64|amd64)
@@ -1914,66 +1914,66 @@ install_shadowtls() {
             arch="arm-unknown-linux-musleabi"
             ;;
         *)
-            echo -e "${RED}不支持的系统架构: $arch${RESET}"
+            echo -e "${RED}Неподдерживаемая архитектура системы: $arch${RESET}"
             exit 1
             ;;
     esac
 
-    # 获取最新版本
+    # Получение последней версии
     version=$(get_latest_version)
 
-    # 尝试下载：先直连 GitHub；ghproxy 为不受信第三方镜像，仅用户明确确认后才使用
+    # Попытка скачивания: сначала напрямую с GitHub; ghproxy — недоверенное стороннее зеркало, используется только после явного подтверждения пользователем
     binary_name="shadow-tls-${arch}"
     github_url="https://github.com/ihciah/shadow-tls/releases/download/${version}/${binary_name}"
     proxy_url="https://ghproxy.com/${github_url}"
 
-    echo -e "${CYAN}正在下载 ShadowTLS ${version} (${arch})...${RESET}"
-    echo -e "${YELLOW}下载地址: ${github_url}${RESET}"
+    echo -e "${CYAN}Скачивание ShadowTLS ${version} (${arch})...${RESET}"
+    echo -e "${YELLOW}Адрес скачивания: ${github_url}${RESET}"
 
     if ! wget --timeout=30 --tries=2 -q "$github_url" -O "/tmp/shadow-tls.tmp" 2>/dev/null; then
-        echo -e "${YELLOW}直连 GitHub 失败。${RESET}"
-        echo -e "${YELLOW}注意：ghproxy.com 是不受信任的第三方镜像站，经其下载的二进制无法验证来源，存在供应链风险。${RESET}"
-        read -rp "是否使用 ghproxy 镜像继续下载？[y/N] " use_proxy
+        echo -e "${YELLOW}Не удалось подключиться напрямую к GitHub.${RESET}"
+        echo -e "${YELLOW}Внимание: ghproxy.com — это недоверенное стороннее зеркало. Происхождение скачанных через него бинарных файлов невозможно проверить, что несёт риски для цепочки поставок.${RESET}"
+        read -rp "Продолжить скачивание через зеркало ghproxy? [y/N] " use_proxy
         if [[ ! "$use_proxy" =~ ^[Yy]$ ]]; then
-            echo -e "${RED}已取消下载${RESET}"
+            echo -e "${RED}Скачивание отменено${RESET}"
             rm -f "/tmp/shadow-tls.tmp"
             exit 1
         fi
-        echo -e "${YELLOW}镜像地址: ${proxy_url}${RESET}"
+        echo -e "${YELLOW}Адрес зеркала: ${proxy_url}${RESET}"
         if ! wget --timeout=60 --tries=3 "$proxy_url" -O "/tmp/shadow-tls.tmp"; then
-            echo -e "${RED}下载 ShadowTLS 失败，请检查网络连接后重试${RESET}"
+            echo -e "${RED}Не удалось скачать ShadowTLS, проверьте подключение к сети и повторите попытку${RESET}"
             rm -f "/tmp/shadow-tls.tmp"
             exit 1
         fi
     fi
 
-    # 验证下载的文件不为空（注：上游未发布哈希/签名，此处仅做非空检查，无法验证来源真实性）
+    # Проверка, что скачанный файл не пуст (примечание: апстрим не публикует хеши/подписи, поэтому проверяется только непустой размер без проверки подлинности источника)
     if [ ! -s "/tmp/shadow-tls.tmp" ]; then
-        echo -e "${RED}下载文件为空，请重试${RESET}"
+        echo -e "${RED}Скачанный файл пуст, повторите попытку${RESET}"
         rm -f "/tmp/shadow-tls.tmp"
         exit 1
     fi
     
-    # 移动到最终位置并设置权限
+    # Перемещение в конечное расположение и установка прав на выполнение
     mv "/tmp/shadow-tls.tmp" "$INSTALL_DIR/shadow-tls"
     chmod +x "$INSTALL_DIR/shadow-tls"
     
-    # 生成随机密码
+    # Генерация случайного пароля
     password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
     
-    # 获取 TLS 伪装域名（白名单校验，防止 unit 注入）
+    # Получение домена маскировки TLS (проверка по белому списку для защиты от инъекций в юнит)
     prompt_tls_domain
     prompt_wildcard_sni
     
-    # 让用户选择要为哪个协议设置 ShadowTLS
+    # Выбор протокола, для которого нужно настроить ShadowTLS
     while true; do
-        echo -e "\n${YELLOW}请选择要配置的协议：${RESET}"
-        echo -e "1. 为 Shadowsocks 配置 ShadowTLS"
-        echo -e "2. 为 Snell 配置 ShadowTLS"
-        echo -e "3. 为两者都配置 ShadowTLS"
-        echo -e "0. 退出"
+        echo -e "\n${YELLOW}Выберите протокол для настройки:${RESET}"
+        echo -e "1. Настроить ShadowTLS для Shadowsocks"
+        echo -e "2. Настроить ShadowTLS для Snell"
+        echo -e "3. Настроить ShadowTLS для обоих протоколов"
+        echo -e "0. Выход"
         
-        read -rp "请选择 [0-3]: " protocol_choice
+        read -rp "Ваш выбор [0-3]: " protocol_choice
         
         case "$protocol_choice" in
             0)
@@ -1981,7 +1981,7 @@ install_shadowtls() {
                 ;;
             1)
                 if ! $has_ss; then
-                    echo -e "${RED}未安装 Shadowsocks${RESET}"
+                    echo -e "${RED}Shadowsocks не установлен${RESET}"
                     continue
                 fi
                 configure_ss=true
@@ -1990,7 +1990,7 @@ install_shadowtls() {
                 ;;
             2)
                 if ! $has_snell; then
-                    echo -e "${RED}未安装 Snell${RESET}"
+                    echo -e "${RED}Snell не установлен${RESET}"
                     continue
                 fi
                 configure_ss=false
@@ -1999,7 +1999,7 @@ install_shadowtls() {
                 ;;
             3)
                 if ! $has_ss || ! $has_snell; then
-                    echo -e "${RED}需要同时安装 Shadowsocks 和 Snell${RESET}"
+                    echo -e "${RED}Требуется, чтобы были установлены одновременно и Shadowsocks, и Snell${RESET}"
                     continue
                 fi
                 configure_ss=true
@@ -2007,128 +2007,128 @@ install_shadowtls() {
                 break
                 ;;
             *)
-                echo -e "${RED}无效的选择${RESET}"
+                echo -e "${RED}Неверный выбор${RESET}"
                 ;;
         esac
     done
     
-    # 配置 Shadowsocks
+    # Настройка Shadowsocks
     if $configure_ss; then
-        echo -e "\n${YELLOW}配置 Shadowsocks 的 ShadowTLS...${RESET}"
+        echo -e "\n${YELLOW}Настройка ShadowTLS для Shadowsocks...${RESET}"
         while true; do
-            read -rp "请输入 ShadowTLS 监听端口 (1-65535，直接回车随机生成): " ss_listen_port
+            read -rp "Введите порт прослушивания ShadowTLS (1-65535, нажмите Enter для случайного выбора): " ss_listen_port
             
-            # 验证并获取可用端口
+            # Проверка и получение доступного порта
             ss_listen_port=$(get_available_port "$ss_listen_port")
             if [ $? -eq 0 ]; then
                 break
             fi
-            echo -e "${YELLOW}请重新输入端口${RESET}"
+            echo -e "${YELLOW}Пожалуйста, введите порт заново${RESET}"
         done
         
-        echo -e "${GREEN}将使用端口: ${ss_listen_port}${RESET}"
+        echo -e "${GREEN}Будет использован порт: ${ss_listen_port}${RESET}"
         
-        # 创建 SS 的 ShadowTLS 服务
+        # Создание службы ShadowTLS для SS
         local ss_port=$(get_ssrust_port)
         create_shadowtls_service "ss" "$ss_port" "$ss_listen_port" "$tls_domain" "$password"
         open_port "$ss_listen_port" tcp
         start_and_verify_service "shadowtls-ss" || return 1
     fi
     
-    # 配置 Snell
+    # Настройка Snell
     if $configure_snell; then
-        echo -e "\n${YELLOW}配置 Snell 的 ShadowTLS...${RESET}"
+        echo -e "\n${YELLOW}Настройка ShadowTLS для Snell...${RESET}"
         
-        # 获取所有 Snell 用户配置
+        # Получение конфигураций всех пользователей Snell
         local user_configs=$(get_all_snell_users)
         if [ -z "$user_configs" ]; then
-            echo -e "${RED}未找到有效的 Snell 用户配置${RESET}"
+            echo -e "${RED}Не найдено действующих пользовательских конфигураций Snell${RESET}"
             return 1
         fi
         
-        # 显示所有 Snell 端口
-        echo -e "\n${YELLOW}当前的 Snell 端口列表：${RESET}"
+        # Отображение всех портов Snell
+        echo -e "\n${YELLOW}Текущий список портов Snell:${RESET}"
         local port_list=()
         while IFS='|' read -r port psk; do
             if [ ! -z "$port" ]; then
                 port_list+=("$port")
                 if [ "$port" = "$(get_snell_port)" ]; then
-                    echo -e "${GREEN}${#port_list[@]}. ${port} (主用户)${RESET}"
+                    echo -e "${GREEN}${#port_list[@]}. ${port} (основной пользователь)${RESET}"
                 else
                     echo -e "${GREEN}${#port_list[@]}. ${port}${RESET}"
                 fi
             fi
         done <<< "$user_configs"
         
-        # 让用户选择要配置的端口
-        echo -e "\n${YELLOW}请选择要配置的端口：${RESET}"
-        echo -e "1-${#port_list[@]}. 选择单个端口"
-        echo -e "0. 为所有端口配置 ShadowTLS"
+        # Выбор портов для настройки
+        echo -e "\n${YELLOW}Выберите порт для настройки:${RESET}"
+        echo -e "1-${#port_list[@]}. Выбрать один порт"
+        echo -e "0. Настроить ShadowTLS для всех портов"
         
-        read -rp "请选择: " port_choice
+        read -rp "Ваш выбор: " port_choice
         
         if [ "$port_choice" = "0" ]; then
-            # 为所有端口配置 ShadowTLS
+            # Настройка ShadowTLS для всех портов
             for port in "${port_list[@]}"; do
-                echo -e "\n${YELLOW}为 Snell 端口 ${port} 配置 ShadowTLS${RESET}"
+                echo -e "\n${YELLOW}Настройка ShadowTLS для порта Snell ${port}${RESET}"
                 while true; do
-                    read -rp "请输入 ShadowTLS 监听端口 (1-65535，直接回车随机生成): " stls_port
+                    read -rp "Введите порт прослушивания ShadowTLS (1-65535, нажмите Enter для случайного выбора): " stls_port
                     
-                    # 验证并获取可用端口
+                    # Проверка и получение доступного порта
                     stls_port=$(get_available_port "$stls_port")
                     if [ $? -eq 0 ]; then
                         break
                     fi
-                    echo -e "${YELLOW}请重新输入端口${RESET}"
+                    echo -e "${YELLOW}Пожалуйста, введите порт заново${RESET}"
                 done
                 
-                echo -e "${GREEN}将使用端口: ${stls_port}${RESET}"
+                echo -e "${GREEN}Будет использован порт: ${stls_port}${RESET}"
                 
                 restrict_snell_to_loopback "$port" || return 1
 
-                # 创建服务文件
+                # Создание файла службы
                 create_shadowtls_service "snell" "$port" "$stls_port" "$tls_domain" "$password"
                 open_port "$stls_port" tcp
                 start_and_verify_service "shadowtls-snell-${port}" || return 1
             done
         elif [[ "$port_choice" =~ ^[0-9]+$ ]] && [ "$port_choice" -ge 1 ] && [ "$port_choice" -le ${#port_list[@]} ]; then
-            # 为选中的端口配置 ShadowTLS
+            # Настройка ShadowTLS для выбранного порта
             local selected_port="${port_list[$((port_choice-1))]}"
-            echo -e "\n${YELLOW}为 Snell 端口 ${selected_port} 配置 ShadowTLS${RESET}"
+            echo -e "\n${YELLOW}Настройка ShadowTLS для порта Snell ${selected_port}${RESET}"
             while true; do
-                read -rp "请输入 ShadowTLS 监听端口 (1-65535，直接回车随机生成): " stls_port
+                read -rp "Введите порт прослушивания ShadowTLS (1-65535, нажмите Enter для случайного выбора): " stls_port
                 
-                # 验证并获取可用端口
+                # Проверка и получение доступного порта
                 stls_port=$(get_available_port "$stls_port")
                 if [ $? -eq 0 ]; then
                     break
                 fi
-                echo -e "${YELLOW}请重新输入端口${RESET}"
+                echo -e "${YELLOW}Пожалуйста, введите порт заново${RESET}"
             done
             
-            echo -e "${GREEN}将使用端口: ${stls_port}${RESET}"
+            echo -e "${GREEN}Будет использован порт: ${stls_port}${RESET}"
             
             restrict_snell_to_loopback "$selected_port" || return 1
 
-            # 创建服务文件
+            # Создание файла службы
             create_shadowtls_service "snell" "$selected_port" "$stls_port" "$tls_domain" "$password"
             open_port "$stls_port" tcp
             start_and_verify_service "shadowtls-snell-${selected_port}" || return 1
         else
-            echo -e "${RED}无效的选择${RESET}"
+            echo -e "${RED}Неверный выбор${RESET}"
             return 1
         fi
     fi
     
-    # 重新加载 systemd 配置
+    # Перезагрузка конфигурации systemd
     systemctl daemon-reload
     
-    # 获取服务器IP
+    # Получение IP сервера
     local server_ip=$(get_server_ip)
     
-    echo -e "\n${GREEN}=== ShadowTLS 安装成功 ===${RESET}"
+    echo -e "\n${GREEN}=== ShadowTLS успешно установлен ===${RESET}"
     
-    # 显示所有可用的配置
+    # Отображение всех доступных конфигураций
     if $configure_ss; then
         local ssrust_password=$(get_ssrust_password)
         local ssrust_method=$(get_ssrust_method)
@@ -2148,14 +2148,14 @@ install_shadowtls() {
         done <<< "$user_configs"
     fi
 
-    echo -e "\n${GREEN}服务已启动并设置为开机自启${RESET}"
+    echo -e "\n${GREEN}Служба запущена и добавлена в автозагрузку${RESET}"
 }
 
-# 卸载 ShadowTLS
+# Удаление ShadowTLS
 uninstall_shadowtls() {
-    echo -e "${CYAN}正在卸载 ShadowTLS...${RESET}"
+    echo -e "${CYAN}Удаление ShadowTLS...${RESET}"
     
-    # 停止并禁用 SS 服务
+    # Остановка и отключение службы SS
     if [ -f "${SYSTEMD_DIR}/shadowtls-ss.service" ]; then
         local ss_listen_port
         ss_listen_port=$(sed -n 's/.*--listen [^ ]*:\([0-9][0-9]*\).*/\1/p' "${SYSTEMD_DIR}/shadowtls-ss.service" | head -n 1)
@@ -2167,7 +2167,7 @@ uninstall_shadowtls() {
         fi
     fi
     
-    # 停止并禁用所有 Snell 相关的 ShadowTLS 服务
+    # Остановка и отключение всех служб ShadowTLS, связанных со Snell
     local snell_services=$(find /etc/systemd/system -name "shadowtls-snell-*.service" 2>/dev/null)
     if [ ! -z "$snell_services" ]; then
         while IFS= read -r service_file; do
@@ -2183,54 +2183,54 @@ uninstall_shadowtls() {
         done <<< "$snell_services"
     fi
     
-    # 删除二进制文件
+    # Удаление бинарного файла
     rm -f "$INSTALL_DIR/shadow-tls"
 
-    # 清理日志文件
+    # Очистка лог-файлов
     rm -f /var/log/shadowtls-*.log
 
-    # 清理 TCP Fast Open 内核参数文件（系统级，删除前询问用户）
+    # Очистка файла параметров ядра TCP Fast Open (общесистемный, перед удалением запрашиваем подтверждение пользователя)
     if [ -f /etc/sysctl.d/99-tcp-fastopen.conf ]; then
-        echo -e "${YELLOW}检测到 /etc/sysctl.d/99-tcp-fastopen.conf，这是系统级内核参数文件（net.ipv4.tcp_fastopen），是否删除？[y/N]${RESET}"
+        echo -e "${YELLOW}Обнаружен /etc/sysctl.d/99-tcp-fastopen.conf — это общесистемный файл параметров ядра (net.ipv4.tcp_fastopen). Удалить его? [y/N]${RESET}"
         read -r del_tfo_conf
         if [[ "$del_tfo_conf" =~ ^[Yy]$ ]]; then
             rm -f /etc/sysctl.d/99-tcp-fastopen.conf
-            echo -e "${GREEN}已删除 /etc/sysctl.d/99-tcp-fastopen.conf${RESET}"
+            echo -e "${GREEN}Файл /etc/sysctl.d/99-tcp-fastopen.conf удалён${RESET}"
         else
-            echo -e "${YELLOW}已保留 /etc/sysctl.d/99-tcp-fastopen.conf${RESET}"
+            echo -e "${YELLOW}Файл /etc/sysctl.d/99-tcp-fastopen.conf сохранён${RESET}"
         fi
     fi
 
-    # 清理 nftables 表（不存在时静默跳过）
+    # Очистка таблицы nftables (тихий пропуск при отсутствии)
     if command -v nft >/dev/null 2>&1; then
         nft delete table inet shadowtls_filter 2>/dev/null || true
     fi
 
-    # 重新加载 systemd 配置
+    # Перезагрузка конфигурации systemd
     systemctl daemon-reload
 
-    echo -e "${GREEN}ShadowTLS 已成功卸载${RESET}"
+    echo -e "${GREEN}ShadowTLS успешно удалён${RESET}"
 }
 
-# 查看配置
+# Просмотр конфигурации
 view_config() {
-    echo -e "${CYAN}正在获取配置信息...${RESET}"
+    echo -e "${CYAN}Получение информации о конфигурации...${RESET}"
     
-    # 检查服务是否安装
+    # Проверка, установлены ли службы
     local ss_service="${SYSTEMD_DIR}/shadowtls-ss.service"
     local snell_services=$(find /etc/systemd/system -name "shadowtls-snell-*.service" 2>/dev/null | sort -u)
     
     if [ ! -f "$ss_service" ] && [ -z "$snell_services" ]; then
-        echo -e "${RED}ShadowTLS 未安装${RESET}"
+        echo -e "${RED}ShadowTLS не установлен${RESET}"
         return 1
     fi
     
-    # 获取服务器IP
+    # Получение IP сервера
     local server_ip=$(get_server_ip)
     
-    # 检查 SS 是否安装并获取配置
+    # Проверка установки SS и получение конфигурации
     if [ -f "$ss_service" ] && check_ssrust; then
-        echo -e "\n${YELLOW}=== Shadowsocks + ShadowTLS 配置 ===${RESET}"
+        echo -e "\n${YELLOW}=== Конфигурация Shadowsocks + ShadowTLS ===${RESET}"
         local ss_listen_port=$(stls_listen_port "$ss_service")
         local tls_domain=$(stls_opt tls "$ss_service")
         local password=$(stls_opt password "$ss_service")
@@ -2241,25 +2241,25 @@ view_config() {
         if [ ! -z "$ss_listen_port" ] && [ ! -z "$tls_domain" ] && [ ! -z "$password" ]; then
             generate_ss_links "${server_ip}" "${ss_listen_port}" "${ssrust_password}" "${ssrust_method}" "${password}" "${tls_domain}" "${ss_port}"
         else
-            echo -e "${RED}SS 配置文件不完整或已损坏${RESET}"
+            echo -e "${RED}Конфигурационный файл SS неполный или повреждён${RESET}"
         fi
     fi
     
-    # 检查 Snell 是否安装并获取配置
+    # Проверка установки Snell и получение конфигурации
     if [ ! -z "$snell_services" ] && check_snell; then
-        echo -e "\n${YELLOW}=== Snell + ShadowTLS 配置 ===${RESET}"
+        echo -e "\n${YELLOW}=== Конфигурация Snell + ShadowTLS ===${RESET}"
         
-        # 获取所有用户配置
+        # Получение всех пользовательских конфигураций
         local user_configs=$(get_all_snell_users)
         if [ ! -z "$user_configs" ]; then
-            # 创建关联数组来存储已处理的端口
+            # Создание ассоциативного массива для хранения уже обработанных портов
             declare -A processed_ports
             
             while IFS='|' read -r port psk; do
                 if [ ! -z "$port" ] && [ -z "${processed_ports[$port]}" ]; then
                     processed_ports[$port]=1
                     
-                    # 获取对应的 ShadowTLS 服务配置
+                    # Получение соответствующей конфигурации службы ShadowTLS
                     local service_file="${SYSTEMD_DIR}/shadowtls-snell-${port}.service"
                     if [ -f "$service_file" ]; then
                         local exec_line=$(grep "ExecStart=" "$service_file")
@@ -2268,86 +2268,86 @@ view_config() {
                         local stls_domain=$(printf '%s\n' "$exec_line" | stls_opt tls)
                         
                         if [ "$port" = "$(get_snell_port)" ]; then
-                            echo -e "\n${GREEN}主用户配置：${RESET}"
+                            echo -e "\n${GREEN}Конфигурация основного пользователя:${RESET}"
                         else
-                            echo -e "\n${GREEN}用户配置 (Snell 端口: ${port}):${RESET}"
+                            echo -e "\n${GREEN}Конфигурация пользователя (порт Snell: ${port}):${RESET}"
                         fi
                         
                         if [ ! -z "$stls_port" ] && [ ! -z "$stls_password" ] && [ ! -z "$stls_domain" ]; then
-                            echo -e "${YELLOW}Snell 配置：${RESET}"
-                            echo -e "  - 端口：${port}"
-                            echo -e "  - PSK：${psk}"
+                            echo -e "${YELLOW}Конфигурация Snell:${RESET}"
+                            echo -e "  - Порт: ${port}"
+                            echo -e "  - PSK: ${psk}"
                             
-                            echo -e "\n${YELLOW}ShadowTLS 配置：${RESET}"
-                            echo -e "  - 监听端口：${stls_port}"
-                            echo -e "  - 密码：${stls_password}"
-                            echo -e "  - SNI：${stls_domain}"
-                            echo -e "  - 版本：3"
+                            echo -e "\n${YELLOW}Конфигурация ShadowTLS:${RESET}"
+                            echo -e "  - Порт прослушивания: ${stls_port}"
+                            echo -e "  - Пароль: ${stls_password}"
+                            echo -e "  - SNI: ${stls_domain}"
+                            echo -e "  - Версия: 3"
                             
-                            echo -e "\n${GREEN}Surge 配置：${RESET}"
-                            echo -e "${YELLOW}Snell 版本：$(get_port_snell_version "$port")${RESET}"
+                            echo -e "\n${GREEN}Конфигурация Surge:${RESET}"
+                            echo -e "${YELLOW}Версия Snell: $(get_port_snell_version "$port")${RESET}"
                             print_snell_shadowtls_line "Snell + ShadowTLS" "$server_ip" "$stls_port" "$psk" \
                                 "$stls_password" "$stls_domain" "$port"
                             
-                            # 检查服务状态
+                            # Проверка статуса службы
                             local service_status=$(systemctl is-active "shadowtls-snell-${port}")
                             if [ "$service_status" = "active" ]; then
-                                echo -e "\n${GREEN}服务状态：正在运行${RESET}"
-                                # 检查端口占用情况
+                                echo -e "\n${GREEN}Статус службы: работает${RESET}"
+                                # Проверка занятости порта
                                 local port_usage=$(netstat -tuln | grep ":${stls_port}")
                                 local port_count=$(echo "$port_usage" | wc -l)
                                 if [ "$port_count" -gt 1 ]; then
-                                    echo -e "${RED}警告：端口 ${stls_port} 被多个服务占用！${RESET}"
-                                    echo -e "${YELLOW}端口占用情况：${RESET}"
+                                    echo -e "${RED}Предупреждение: порт ${stls_port} занят несколькими службами!${RESET}"
+                                    echo -e "${YELLOW}Информация о занятости порта:${RESET}"
                                     netstat -tuln | grep ":${stls_port}"
                                 fi
                             else
-                                echo -e "\n${RED}服务状态：未运行${RESET}"
-                                echo -e "${YELLOW}请尝试以下命令重启服务：${RESET}"
+                                echo -e "\n${RED}Статус службы: не работает${RESET}"
+                                echo -e "${YELLOW}Попробуйте перезапустить службу следующей командой:${RESET}"
                                 echo -e "systemctl restart shadowtls-snell-${port}"
                             fi
                         else
-                            echo -e "${RED}配置文件不完整或已损坏${RESET}"
+                            echo -e "${RED}Конфигурационный файл неполный или повреждён${RESET}"
                         fi
                     else
-                        echo -e "\n${YELLOW}未找到用户 (端口: ${port}) 的 ShadowTLS 配置${RESET}"
+                        echo -e "\n${YELLOW}Конфигурация ShadowTLS для пользователя (порт: ${port}) не найдена${RESET}"
                     fi
                 fi
             done <<< "$user_configs"
         else
-            echo -e "\n${YELLOW}未找到有效的 Snell 用户配置${RESET}"
+            echo -e "\n${YELLOW}Не найдено действующих пользовательских конфигураций Snell${RESET}"
         fi
     fi
     
-    # 显示服务状态
-    echo -e "\n${YELLOW}=== ShadowTLS 服务状态 ===${RESET}"
+    # Отображение статуса служб
+    echo -e "\n${YELLOW}=== Статус служб ShadowTLS ===${RESET}"
     
-    # 显示 SS 服务状态
+    # Отображение статуса службы SS
     if [ -f "$ss_service" ]; then
-        echo -e "\n${YELLOW}SS 服务状态：${RESET}"
+        echo -e "\n${YELLOW}Статус службы SS:${RESET}"
         systemctl status shadowtls-ss --no-pager
         
-        # 如果服务未运行，显示重启命令
+        # Если служба не работает, выводим команду для перезапуска
         if [ "$(systemctl is-active shadowtls-ss)" != "active" ]; then
-            echo -e "\n${YELLOW}SS 服务未运行，请尝试以下命令重启：${RESET}"
+            echo -e "\n${YELLOW}Служба SS не работает, попробуйте перезапустить её следующей командой:${RESET}"
             echo -e "systemctl restart shadowtls-ss"
         fi
     fi
     
-    # 显示所有 Snell 服务状态（避免重复显示）
+    # Отображение статуса всех служб Snell (без дублирования)
     if [ ! -z "$snell_services" ]; then
-        echo -e "\n${YELLOW}Snell 服务状态：${RESET}"
+        echo -e "\n${YELLOW}Статус служб Snell:${RESET}"
         declare -A shown_services
         while IFS= read -r service_file; do
             local port=$(basename "$service_file" | sed 's/shadowtls-snell-\([0-9]*\)\.service/\1/')
             if [ -z "${shown_services[$port]}" ]; then
                 shown_services[$port]=1
-                echo -e "\n${GREEN}Snell 端口 ${port} 的 ShadowTLS 服务状态：${RESET}"
+                echo -e "\n${GREEN}Статус службы ShadowTLS для порта Snell ${port}:${RESET}"
                 systemctl status "shadowtls-snell-${port}" --no-pager
                 
-                # 如果服务未运行，显示重启命令
+                # Если служба не работает, выводим команду для перезапуска
                 if [ "$(systemctl is-active shadowtls-snell-${port})" != "active" ]; then
-                    echo -e "\n${YELLOW}服务未运行，请尝试以下命令重启：${RESET}"
+                    echo -e "\n${YELLOW}Служба не работает, попробуйте перезапустить её следующей командой:${RESET}"
                     echo -e "systemctl restart shadowtls-snell-${port}"
                 fi
             fi
@@ -2355,48 +2355,48 @@ view_config() {
     fi
 }
 
-# 新增 ShadowTLS 配置
+# Добавление новой конфигурации ShadowTLS
 add_shadowtls_config() {
-    echo -e "${CYAN}新增 ShadowTLS 配置...${RESET}"
+    echo -e "${CYAN}Добавление конфигурации ShadowTLS...${RESET}"
     
-    # 检测已安装的协议
+    # Определение установленных протоколов
     local has_ss=false
     local has_snell=false
     local has_ss_stls=false
     
     if check_ssrust; then
         has_ss=true
-        echo -e "${GREEN}检测到已安装 Shadowsocks Rust${RESET}"
+        echo -e "${GREEN}Обнаружен установленный Shadowsocks Rust${RESET}"
         if [ -f "${SYSTEMD_DIR}/shadowtls-ss.service" ]; then
             has_ss_stls=true
-            echo -e "${YELLOW}已存在 Shadowsocks 的 ShadowTLS 配置${RESET}"
+            echo -e "${YELLOW}Конфигурация ShadowTLS для Shadowsocks уже существует${RESET}"
         fi
     fi
     
     if check_snell_config; then
         has_snell=true
-        echo -e "${GREEN}检测到已安装 Snell${RESET}"
+        echo -e "${GREEN}Обнаружен установленный Snell${RESET}"
     elif check_snell; then
-        echo -e "${YELLOW}检测到 Snell 二进制，但主配置不可用，暂不能为 Snell 新增 ShadowTLS 配置${RESET}"
+        echo -e "${YELLOW}Обнаружен бинарный файл Snell, но основная конфигурация недоступна; добавление конфигурации ShadowTLS для Snell пока невозможно${RESET}"
     fi
     
     if ! $has_ss && ! $has_snell; then
-        echo -e "${RED}未检测到 Shadowsocks Rust 或 Snell，请先安装其中一个${RESET}"
+        echo -e "${RED}Не обнаружен ни Shadowsocks Rust, ни Snell. Пожалуйста, сначала установите один из них${RESET}"
         return 1
     fi
     
-    # 让用户选择要为哪个协议新增 ShadowTLS 配置
+    # Выбор протокола для добавления конфигурации ShadowTLS
     while true; do
-        echo -e "\n${YELLOW}请选择要新增配置的协议：${RESET}"
+        echo -e "\n${YELLOW}Выберите протокол для добавления конфигурации:${RESET}"
         if $has_ss && ! $has_ss_stls; then
-            echo -e "1. 为 Shadowsocks 新增 ShadowTLS 配置"
+            echo -e "1. Добавить конфигурацию ShadowTLS для Shadowsocks"
         fi
         if $has_snell; then
-            echo -e "2. 为 Snell 新增 ShadowTLS 配置"
+            echo -e "2. Добавить конфигурацию ShadowTLS для Snell"
         fi
-        echo -e "0. 返回"
+        echo -e "0. Назад"
         
-        read -rp "请选择: " choice
+        read -rp "Ваш выбор: " choice
         
         case "$choice" in
             0)
@@ -2404,34 +2404,34 @@ add_shadowtls_config() {
                 ;;
             1)
                 if ! $has_ss || $has_ss_stls; then
-                    echo -e "${RED}无效的选择${RESET}"
+                    echo -e "${RED}Неверный выбор${RESET}"
                     continue
                 fi
-                # 获取必要的配置信息
+                # Получение необходимой информации для настройки
                 password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-                # 获取 TLS 伪装域名（白名单校验，防止 unit 注入）
+                # Получение домена маскировки TLS (проверка по белому списку для защиты от инъекций в юнит)
                 prompt_tls_domain
                 prompt_wildcard_sni
                 
-                # 配置 SS 的 ShadowTLS
+                # Настройка ShadowTLS для SS
                 while true; do
-                    read -rp "请输入 ShadowTLS 监听端口 (1-65535，直接回车随机生成): " ss_listen_port
+                    read -rp "Введите порт прослушивания ShadowTLS (1-65535, нажмите Enter для случайного выбора): " ss_listen_port
                     
-                    # 验证并获取可用端口
+                    # Проверка и получение доступного порта
                     ss_listen_port=$(get_available_port "$ss_listen_port")
                     if [ $? -eq 0 ]; then
                         break
                     fi
-                    echo -e "${YELLOW}请重新输入端口${RESET}"
+                    echo -e "${YELLOW}Пожалуйста, введите порт заново${RESET}"
                 done
                 
-                # 创建 SS 的 ShadowTLS 服务
+                # Создание службы ShadowTLS для SS
                 local ss_port=$(get_ssrust_port)
                 create_shadowtls_service "ss" "$ss_port" "$ss_listen_port" "$tls_domain" "$password"
                 open_port "$ss_listen_port" tcp
                 start_and_verify_service "shadowtls-ss" || return 1
                 
-                # 显示配置信息
+                # Отображение информации о конфигурации
                 local server_ip=$(get_server_ip)
                 local ssrust_password=$(get_ssrust_password)
                 local ssrust_method=$(get_ssrust_method)
@@ -2440,32 +2440,32 @@ add_shadowtls_config() {
                 ;;
             2)
                 if ! $has_snell; then
-                    echo -e "${RED}无效的选择${RESET}"
+                    echo -e "${RED}Неверный выбор${RESET}"
                     continue
                 fi
                 
-                # 获取必要的配置信息
+                # Получение необходимой информации для настройки
                 password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-                # 获取 TLS 伪装域名（白名单校验，防止 unit 注入）
+                # Получение домена маскировки TLS (проверка по белому списку для защиты от инъекций в юнит)
                 prompt_tls_domain
                 prompt_wildcard_sni
                 
-                # 获取所有 Snell 用户配置
+                # Получение конфигураций всех пользователей Snell
                 local user_configs=$(get_all_snell_users)
                 if [ -z "$user_configs" ]; then
-                    echo -e "${RED}未找到有效的 Snell 用户配置${RESET}"
+                    echo -e "${RED}Не найдено действующих пользовательских конфигураций Snell${RESET}"
                     return 1
                 fi
                 
-                # 显示所有未配置的 Snell 端口
-                echo -e "\n${YELLOW}未配置 ShadowTLS 的 Snell 端口列表：${RESET}"
+                # Отображение всех портов Snell без настроенного ShadowTLS
+                echo -e "\n${YELLOW}Список портов Snell без настроенного ShadowTLS:${RESET}"
                 local port_list=()
                 local port_count=0
                 while IFS='|' read -r port psk; do
                     if [ ! -z "$port" ] && [ ! -f "${SYSTEMD_DIR}/shadowtls-snell-${port}.service" ]; then
                         port_list+=("$port")
                         if [ "$port" = "$(get_snell_port)" ]; then
-                            echo -e "${GREEN}$((++port_count)). ${port} (主用户)${RESET}"
+                            echo -e "${GREEN}$((++port_count)). ${port} (основной пользователь)${RESET}"
                         else
                             echo -e "${GREEN}$((++port_count)). ${port}${RESET}"
                         fi
@@ -2473,160 +2473,160 @@ add_shadowtls_config() {
                 done <<< "$user_configs"
                 
                 if [ ${#port_list[@]} -eq 0 ]; then
-                    echo -e "${YELLOW}所有 Snell 端口都已配置 ShadowTLS${RESET}"
+                    echo -e "${YELLOW}Для всех портов Snell уже настроен ShadowTLS${RESET}"
                     return 0
                 fi
                 
-                # 让用户选择要配置的端口
-                echo -e "\n${YELLOW}请选择要配置的端口：${RESET}"
-                echo -e "1-${#port_list[@]}. 选择单个端口"
-                echo -e "0. 为所有未配置端口配置 ShadowTLS"
+                # Выбор портов для настройки
+                echo -e "\n${YELLOW}Выберите порт для настройки:${RESET}"
+                echo -e "1-${#port_list[@]}. Выбрать один порт"
+                echo -e "0. Настроить ShadowTLS для всех ненастроенных портов"
                 
-                read -rp "请选择: " port_choice
+                read -rp "Ваш выбор: " port_choice
                 
                 if [ "$port_choice" = "0" ]; then
-                    # 为所有未配置端口配置 ShadowTLS
+                    # Настройка ShadowTLS для всех ненастроенных портов
                     for port in "${port_list[@]}"; do
-                        echo -e "\n${YELLOW}为 Snell 端口 ${port} 配置 ShadowTLS${RESET}"
+                        echo -e "\n${YELLOW}Настройка ShadowTLS для порта Snell ${port}${RESET}"
                         while true; do
-                            read -rp "请输入 ShadowTLS 监听端口 (1-65535，直接回车随机生成): " stls_port
+                            read -rp "Введите порт прослушивания ShadowTLS (1-65535, нажмите Enter для случайного выбора): " stls_port
                             
-                            # 验证并获取可用端口
+                            # Проверка и получение доступного порта
                             stls_port=$(get_available_port "$stls_port")
                             if [ $? -eq 0 ]; then
                                 break
                             fi
-                            echo -e "${YELLOW}请重新输入端口${RESET}"
+                            echo -e "${YELLOW}Пожалуйста, введите порт заново${RESET}"
                         done
                         
                         restrict_snell_to_loopback "$port" || return 1
 
-                        # 创建服务文件
+                        # Создание файла службы
                         create_shadowtls_service "snell" "$port" "$stls_port" "$tls_domain" "$password"
                         open_port "$stls_port" tcp
                         start_and_verify_service "shadowtls-snell-${port}" || return 1
                         
-                        # 显示配置信息
+                        # Отображение информации о конфигурации
                         local server_ip=$(get_server_ip)
                         local psk=$(get_snell_config "$port")
                         generate_snell_links "${server_ip}" "${stls_port}" "${psk}" "${password}" "${tls_domain}" "${port}"
                     done
                 elif [[ "$port_choice" =~ ^[0-9]+$ ]] && [ "$port_choice" -ge 1 ] && [ "$port_choice" -le ${#port_list[@]} ]; then
-                    # 为选中的端口配置 ShadowTLS
+                    # Настройка ShadowTLS для выбранного порта
                     local selected_port="${port_list[$((port_choice-1))]}"
-                    echo -e "\n${YELLOW}为 Snell 端口 ${selected_port} 配置 ShadowTLS${RESET}"
+                    echo -e "\n${YELLOW}Настройка ShadowTLS для порта Snell ${selected_port}${RESET}"
                     while true; do
-                        read -rp "请输入 ShadowTLS 监听端口 (1-65535，直接回车随机生成): " stls_port
+                        read -rp "Введите порт прослушивания ShadowTLS (1-65535, нажмите Enter для случайного выбора): " stls_port
                         
-                        # 验证并获取可用端口
+                        # Проверка и получение доступного порта
                         stls_port=$(get_available_port "$stls_port")
                         if [ $? -eq 0 ]; then
                             break
                         fi
-                        echo -e "${YELLOW}请重新输入端口${RESET}"
+                        echo -e "${YELLOW}Пожалуйста, введите порт заново${RESET}"
                     done
                     
                     restrict_snell_to_loopback "$selected_port" || return 1
 
-                    # 创建服务文件
+                    # Создание файла службы
                     create_shadowtls_service "snell" "$selected_port" "$stls_port" "$tls_domain" "$password"
                     open_port "$stls_port" tcp
                     start_and_verify_service "shadowtls-snell-${selected_port}" || return 1
                     
-                    # 显示配置信息
+                    # Отображение информации о конфигурации
                     local server_ip=$(get_server_ip)
                     local psk=$(get_snell_config "$selected_port")
                     generate_snell_links "${server_ip}" "${stls_port}" "${psk}" "${password}" "${tls_domain}" "${selected_port}"
                 else
-                    echo -e "${RED}无效的选择${RESET}"
+                    echo -e "${RED}Неверный выбор${RESET}"
                     continue
                 fi
                 break
                 ;;
             *)
-                echo -e "${RED}无效的选择${RESET}"
+                echo -e "${RED}Неверный выбор${RESET}"
                 ;;
         esac
     done
     
-    # 重新加载 systemd 配置
+    # Перезагрузка конфигурации systemd
     systemctl daemon-reload
-    echo -e "\n${GREEN}新增配置完成${RESET}"
+    echo -e "\n${GREEN}Добавление конфигурации завершено${RESET}"
 }
 
-# 重启 ShadowTLS 服务
+# Перезапуск служб ShadowTLS
 restart_shadowtls_services() {
-    echo -e "${CYAN}重启 ShadowTLS 服务...${RESET}"
+    echo -e "${CYAN}Перезапуск служб ShadowTLS...${RESET}"
     
     local has_services=false
     
-    # 重启 SS 服务
+    # Перезапуск службы SS
     if [ -f "${SYSTEMD_DIR}/shadowtls-ss.service" ]; then
         has_services=true
-        echo -e "\n${YELLOW}重启 Shadowsocks 的 ShadowTLS 服务...${RESET}"
+        echo -e "\n${YELLOW}Перезапуск службы ShadowTLS для Shadowsocks...${RESET}"
         systemctl restart shadowtls-ss
         if [ $? -eq 0 ]; then
-            echo -e "${GREEN}Shadowsocks ShadowTLS 服务重启成功${RESET}"
+            echo -e "${GREEN}Служба ShadowTLS для Shadowsocks успешно перезапущена${RESET}"
         else
-            echo -e "${RED}Shadowsocks ShadowTLS 服务重启失败${RESET}"
+            echo -e "${RED}Не удалось перезапустить службу ShadowTLS для Shadowsocks${RESET}"
         fi
     fi
     
-    # 重启所有 Snell 服务
+    # Перезапуск всех служб Snell
     local snell_services=$(find /etc/systemd/system -name "shadowtls-snell-*.service" 2>/dev/null)
     if [ ! -z "$snell_services" ]; then
         has_services=true
-        echo -e "\n${YELLOW}重启 Snell 的 ShadowTLS 服务...${RESET}"
+        echo -e "\n${YELLOW}Перезапуск служб ShadowTLS для Snell...${RESET}"
         while IFS= read -r service_file; do
             local port=$(basename "$service_file" | sed 's/shadowtls-snell-\([0-9]*\)\.service/\1/')
-            echo -e "重启端口 ${port} 的服务..."
+            echo -e "Перезапуск службы для порта ${port}..."
             systemctl restart "shadowtls-snell-${port}"
             if [ $? -eq 0 ]; then
-                echo -e "${GREEN}端口 ${port} 的服务重启成功${RESET}"
+                echo -e "${GREEN}Служба для порта ${port} успешно перезапущена${RESET}"
             else
-                echo -e "${RED}端口 ${port} 的服务重启失败${RESET}"
+                echo -e "${RED}Не удалось перезапустить службу для порта ${port}${RESET}"
             fi
         done <<< "$snell_services"
     fi
     
     if ! $has_services; then
-        echo -e "${RED}未找到任何 ShadowTLS 服务${RESET}"
+        echo -e "${RED}Службы ShadowTLS не найдены${RESET}"
         return 1
     fi
     
-    echo -e "\n${GREEN}所有服务重启完成${RESET}"
+    echo -e "\n${GREEN}Перезапуск всех служб завершён${RESET}"
     
-    # 显示所有服务状态
-    echo -e "\n${YELLOW}服务状态：${RESET}"
+    # Отображение статуса всех служб
+    echo -e "\n${YELLOW}Статус служб:${RESET}"
     if [ -f "${SYSTEMD_DIR}/shadowtls-ss.service" ]; then
-        echo -e "\n${CYAN}Shadowsocks ShadowTLS 服务状态：${RESET}"
+        echo -e "\n${CYAN}Статус службы ShadowTLS для Shadowsocks:${RESET}"
         systemctl status shadowtls-ss --no-pager
     fi
     
     if [ ! -z "$snell_services" ]; then
         while IFS= read -r service_file; do
             local port=$(basename "$service_file" | sed 's/shadowtls-snell-\([0-9]*\)\.service/\1/')
-            echo -e "\n${CYAN}Snell 端口 ${port} 的 ShadowTLS 服务状态：${RESET}"
+            echo -e "\n${CYAN}Статус службы ShadowTLS для порта Snell ${port}:${RESET}"
             systemctl status "shadowtls-snell-${port}" --no-pager
         done <<< "$snell_services"
     fi
 }
 
-# 主菜单
+# Главное меню
 main_menu() {
     while true; do
-        echo -e "\n${CYAN}ShadowTLS 管理菜单${RESET}"
-        echo -e "${YELLOW}1. 安装 ShadowTLS${RESET}"
-        echo -e "${YELLOW}2. 卸载 ShadowTLS${RESET}"
-        echo -e "${YELLOW}3. 查看配置${RESET}"
-        echo -e "${YELLOW}4. 新增配置${RESET}"
-        echo -e "${YELLOW}5. 重启服务${RESET}"
-        echo -e "${YELLOW}6. 返回上级菜单${RESET}"
-        echo -e "${YELLOW}0. 退出${RESET}"
+        echo -e "\n${CYAN}Меню управления ShadowTLS${RESET}"
+        echo -e "${YELLOW}1. Установить ShadowTLS${RESET}"
+        echo -e "${YELLOW}2. Удалить ShadowTLS${RESET}"
+        echo -e "${YELLOW}3. Просмотреть конфигурацию${RESET}"
+        echo -e "${YELLOW}4. Добавить конфигурацию${RESET}"
+        echo -e "${YELLOW}5. Перезапустить службы${RESET}"
+        echo -e "${YELLOW}6. Вернуться в предыдущее меню${RESET}"
+        echo -e "${YELLOW}0. Выход${RESET}"
         
-        if ! read -rp "请选择操作 [0-6]: " choice; then
+        if ! read -rp "Выберите действие [0-6]: " choice; then
             echo
-            echo -e "${YELLOW}未读取到输入，已退出 ShadowTLS 菜单。${RESET}"
+            echo -e "${YELLOW}Ввод не получен, выход из меню ShadowTLS.${RESET}"
             return 0
         fi
         
@@ -2653,18 +2653,18 @@ main_menu() {
                 exit 0
                 ;;
             *)
-                echo -e "${RED}无效的选择${RESET}"
+                echo -e "${RED}Неверный выбор${RESET}"
                 ;;
         esac
     done
 }
 
-# 检查root权限
+# Проверка прав root
 check_root
-# 旧版 snell-server.conf 迁到 users/snell-main.conf（以前藏在 get_snell_port 里，每次读端口都做一遍）
+# Миграция старого snell-server.conf в users/snell-main.conf (раньше была спрятана внутри get_snell_port и выполнялась при каждом чтении порта)
 migrate_legacy_snell_config >/dev/null 2>&1 || true
 
-# 如果直接运行此脚本，则显示主菜单
+# Если скрипт запущен напрямую, отображаем главное меню
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main_menu
 fi
