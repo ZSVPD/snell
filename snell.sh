@@ -29,7 +29,7 @@ SNELL_RAW_BASE="${SNELL_RAW_BASE:-https://raw.githubusercontent.com/ZSVPD/snell-
 SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://raw.githubusercontent.com/ZSVPD/snell-script/main/install.sh}"       # snell.sh (Debian / Ubuntu / CentOS / RHEL)
 SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://snell-alpine.jinqians.com}" # snell-alpine.sh          # snell-alpine.sh
 SNELL_DOCKER_SCRIPT_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}" # snell-docker.sh          # snell-docker.sh
-SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://raw.githubusercontent.com/ZSVPD/snell-script/main/menu.sh" # menu.sh
+SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://raw.githubusercontent.com/ZSVPD/snell-script/main/menu.sh}" # menu.sh
 
 # Проверка запуска с правами root
 check_root() {
@@ -2833,7 +2833,7 @@ fi
 # Скачивание и запуск последней версии скрипта (с проверкой целостности: остановка при ошибке передачи, проверка на пустоту и синтаксис)
 echo -e "${CYAN}Получение последней версии скрипта управления...${RESET}"
 TMP_SCRIPT=$(mktemp)
-if curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 https://snell.jinqians.com -o "$TMP_SCRIPT" \
+if curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 https://raw.githubusercontent.com/ZSVPD/snell-script/main/snell.sh -o "$TMP_SCRIPT" \
     && [ -s "$TMP_SCRIPT" ] && bash -n "$TMP_SCRIPT" 2>/dev/null; then
     bash "$TMP_SCRIPT"
     rm -f "$TMP_SCRIPT"
