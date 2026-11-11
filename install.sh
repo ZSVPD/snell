@@ -61,7 +61,7 @@ ensure_packages() {
 ensure_packages "curl"
 
 # Можно заменить на зеркало с помощью одноименных переменных окружения (при тестировании можно указать локальные файлы)
-DEBIAN_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"
+DEBIAN_URL="${SNELL_SCRIPT_URL:-https://raw.githubusercontent.com/ZSVPD/snell-script/main/snell.sh}"
 CENTOS_URL="${SNELL_CENTOS_SCRIPT_URL:-https://snell-centos.jinqians.com}"
 ALPINE_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}"
 
