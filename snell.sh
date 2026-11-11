@@ -26,8 +26,8 @@ RESET='\033[0m'
 # Обновление самого скрипта и команды управления идут через короткие домены для учета статистики запусков.
 # Можно переопределить одноименными переменными окружения для использования зеркала (или локальных файлов при тестах).
 SNELL_RAW_BASE="${SNELL_RAW_BASE:-https://raw.githubusercontent.com/jinqians/snell/main}"
-SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://snell.jinqians.com}"                     # snell.sh (Debian / Ubuntu / CentOS / RHEL)
-SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://raw.githubusercontent.com/ZSVPD/snell-script/main/install.sh}" # snell-alpine.sh
+SNELL_SCRIPT_URL="${SNELL_SCRIPT_URL:-https://raw.githubusercontent.com/ZSVPD/snell-script/main/install.sh}"                     # snell.sh (Debian / Ubuntu / CentOS / RHEL)
+SNELL_ALPINE_SCRIPT_URL="${SNELL_ALPINE_SCRIPT_URL:-https://snell-alpine.jinqians.com}" # snell-alpine.sh
 SNELL_DOCKER_SCRIPT_URL="${SNELL_DOCKER_SCRIPT_URL:-https://snell-docker.jinqians.com}" # snell-docker.sh
 SNELL_MENU_SCRIPT_URL="${SNELL_MENU_SCRIPT_URL:-https://menu.jinqians.com}"             # menu.sh
 
