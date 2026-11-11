@@ -4546,7 +4546,7 @@ setup_bbr() {
     echo -e "${CYAN}Получение и запуск скрипта управления BBR...${RESET}"
 
     # Скачивание локально и запуск после проверки целостности
-    run_remote_script "${SNELL_RAW_BASE}/scripts/bbr.sh" "скрипт BBR"
+    run_remote_script "${SNELL_RAW_BASE}/bbr.sh" "скрипт BBR"
 
     # После завершения скрипта BBR управление автоматически вернется сюда
     echo -e "${GREEN}Операции управления BBR завершены${RESET}"
@@ -4556,7 +4556,7 @@ setup_bbr() {
 # Управление ShadowTLS
 setup_shadowtls() {
     echo -e "${CYAN}Запуск скрипта управления ShadowTLS...${RESET}"
-    run_remote_script "${SNELL_RAW_BASE}/scripts/shadowtls.sh" "скрипт ShadowTLS"
+    run_remote_script "${SNELL_RAW_BASE}/shadowtls.sh" "скрипт ShadowTLS"
 
     # После завершения скрипта ShadowTLS управление автоматически вернется сюда
     echo -e "${GREEN}Операции управления ShadowTLS завершены${RESET}"
